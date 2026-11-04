@@ -210,7 +210,7 @@ export default function ExamsPage() {
                 disabled={!form.title.trim() || !form.subjectId || !form.classId || !form.examDate || Number(form.duration) < 1 || Number(form.totalMarks) < 1 || Number(form.passMark) < 0 || saveExam.isPending}
                 onClick={() => saveExam.mutate()}
               >
-                {createExam.isPending ? 'Creating…' : 'Create Exam'}
+                {saveExam.isPending ? 'Saving…' : editingExam ? 'Save Changes' : 'Create Exam'}
               </button>
             </div>
           </div>
