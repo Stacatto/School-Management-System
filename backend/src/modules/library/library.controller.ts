@@ -17,14 +17,32 @@ export async function listBooks(req: AuthRequest, res: Response, next: NextFunct
 
 export async function addBook(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const book = await prisma.book.create({ data: req.body });
+    const totalCopies = Math.max(1, Number(req.body.totalCopies) || 1);
+    const { title, author, isbn, category, publishedYear } = req.body;
+    const book = await prisma.book.create({ data: { title, author, isbn: isbn || null, category: category || null, publishedYear: publishedYear ? Number(publishedYear) : null, totalCopies, availableCopies: totalCopies } });
     return sendSuccess(res, book, 'Book added', 201);
   } catch (err) { next(err); }
 }
 
 export async function updateBook(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const book = await prisma.book.update({ where: { id: req.params.id }, data: req.body });
+    const current = await prisma.book.findUniqueOrThrow({ where: { id: req.params.id } });
+    const data: any = {};
+    for (const field of ['title', 'author', 'isbn', 'category', 'publishedYear'] as const) {
+      if (field in req.body) data[field] = req.body[field] || null;
+    }
+    if ('title' in req.body) data.title = String(req.body.title).trim();
+    if ('author' in req.body) data.author = String(req.body.author).trim();
+    if ('totalCopies' in req.body) {
+      const totalCopies = Number(req.body.totalCopies);
+      const borrowedCopies = current.totalCopies - current.availableCopies;
+      if (!Number.isInteger(totalCopies) || totalCopies < borrowedCopies) {
+        return res.status(400).json({ success: false, message: `Total copies cannot be less than the ${borrowedCopies} copies currently borrowed` });
+      }
+      data.totalCopies = totalCopies;
+      data.availableCopies = totalCopies - borrowedCopies;
+    }
+    const book = await prisma.book.update({ where: { id: req.params.id }, data });
     return sendSuccess(res, book);
   } catch (err) { next(err); }
 }

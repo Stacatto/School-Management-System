@@ -87,3 +87,20 @@ export async function getMe(req: AuthRequest, res: Response, next: NextFunction)
     return sendSuccess(res, user);
   } catch (err) { next(err); }
 }
+
+export async function updateProfile(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : null;
+    if (name.length < 2 || !email) return sendError(res, 'Name and email are required', 400);
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing && existing.id !== req.user!.id) return sendError(res, 'That email address is already in use', 409);
+    const user = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { name, email, phone },
+      select: { id: true, name: true, email: true, role: true, phone: true, avatar: true },
+    });
+    return sendSuccess(res, user, 'Profile updated');
+  } catch (err) { next(err); }
+}

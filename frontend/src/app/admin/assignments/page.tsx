@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { api } from '@/lib/api';
 import { useState } from 'react';
-import { Plus, BookMarked, Clock, CheckCircle2, AlertCircle, FileText, Users, X, ChevronRight, Star } from 'lucide-react';
+import { Plus, BookMarked, Clock, CheckCircle2, AlertCircle, FileText, Users, X, ChevronRight, Star, Pencil } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 
 interface Assignment {
@@ -12,6 +12,8 @@ interface Assignment {
   title: string;
   description?: string;
   dueDate: string;
+  subjectId?: string;
+  classId?: string;
   totalPoints?: number;
   subject?: { name: string };
   class?: { name: string; _count?: { students: number } };
@@ -192,7 +194,7 @@ function SubmissionsPanel({ assignment, onClose }: { assignment: Assignment; onC
   );
 }
 
-function AssignmentCard({ a, role, onViewSubmissions }: { a: Assignment; role: string; onViewSubmissions: () => void }) {
+function AssignmentCard({ a, role, onViewSubmissions, onEdit }: { a: Assignment; role: string; onViewSubmissions: () => void; onEdit: () => void }) {
   const u = urgency(a.dueDate);
   const total = a.class?._count?.students ?? 0;
   const submitted = a._count?.submissions ?? 0;
@@ -214,7 +216,10 @@ function AssignmentCard({ a, role, onViewSubmissions }: { a: Assignment; role: s
             </p>
           </div>
         </div>
-        <span className={`badge ${u.cls} flex-shrink-0`}>{u.label}</span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={`badge ${u.cls}`}>{u.label}</span>
+          {(role === 'TEACHER' || role === 'ADMIN') && <button aria-label={`Edit ${a.title}`} onClick={onEdit} className="p-1.5 text-gray-400 hover:text-primary-600 rounded-lg hover:bg-primary-50"><Pencil className="w-4 h-4" /></button>}
+        </div>
       </div>
 
       {a.description && <p className="text-xs text-gray-500 mb-3 line-clamp-2">{a.description}</p>}
@@ -253,6 +258,7 @@ export default function AssignmentsPage() {
   const role = user?.role || '';
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'overdue'>('all');
   const [form, setForm] = useState(EMPTY_FORM);
@@ -274,14 +280,30 @@ export default function AssignmentsPage() {
     enabled: role === 'TEACHER' || role === 'ADMIN',
   });
 
-  const create = useMutation({
-    mutationFn: (body: typeof form) => api.post('/assignments', {
+  const save = useMutation({
+    mutationFn: (body: typeof form) => {
+      const payload = {
       ...body,
       dueDate: new Date(body.dueDate).toISOString(),
       totalPoints: Number(body.totalPoints),
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['assignments'] }); setShowAdd(false); setForm(EMPTY_FORM); },
+      };
+      return editingId ? api.put(`/assignments/${editingId}`, payload) : api.post('/assignments', payload);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['assignments'] }); setShowAdd(false); setEditingId(null); setForm(EMPTY_FORM); },
   });
+  const openEditor = (assignment?: Assignment) => {
+    setEditingId(assignment?.id ?? null);
+    setForm(assignment ? {
+      title: assignment.title,
+      description: assignment.description || '',
+      dueDate: new Date(assignment.dueDate).toISOString().slice(0, 16),
+      subjectId: assignment.subjectId || '',
+      classId: assignment.classId || '',
+      totalPoints: String(assignment.totalPoints ?? 100),
+    } : EMPTY_FORM);
+    save.reset();
+    setShowAdd(true);
+  };
 
   const now = Date.now();
   const allData: Assignment[] = data || [];
@@ -307,7 +329,7 @@ export default function AssignmentsPage() {
       allowedRoles={['ADMIN', 'TEACHER', 'STUDENT']}
       actions={
         (role === 'TEACHER' || role === 'ADMIN') ? (
-          <button className="btn-primary" onClick={() => setShowAdd(true)}>
+          <button className="btn-primary" onClick={() => openEditor()}>
             <Plus className="w-4 h-4" /> New Assignment
           </button>
         ) : undefined
@@ -360,7 +382,7 @@ export default function AssignmentsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {assignments.map(a => (
-              <AssignmentCard key={a.id} a={a} role={role} onViewSubmissions={() => setSelectedAssignment(a)} />
+              <AssignmentCard key={a.id} a={a} role={role} onViewSubmissions={() => setSelectedAssignment(a)} onEdit={() => openEditor(a)} />
             ))}
           </div>
         )}
@@ -372,11 +394,11 @@ export default function AssignmentsPage() {
       <SubmissionsPanel assignment={selectedAssignment} onClose={() => setSelectedAssignment(null)} />
     )}
 
-    {/* Create modal */}
+    {/* Create / edit modal */}
     {showAdd && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-scale-in">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">New Assignment</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">{editingId ? 'Edit Assignment' : 'New Assignment'}</h2>
           <div className="space-y-4">
             <div>
               <label className="label">Title</label>
@@ -412,20 +434,20 @@ export default function AssignmentsPage() {
                 <input className="input" type="number" min="1" value={form.totalPoints} onChange={e => setForm(f => ({ ...f, totalPoints: e.target.value }))} />
               </div>
             </div>
-            {create.isError && (
+            {save.isError && (
               <p className="text-sm text-red-600" role="alert">
                 Couldn’t create the assignment. Please check the details and try again.
               </p>
             )}
           </div>
           <div className="flex gap-3 mt-6">
-            <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setForm(EMPTY_FORM); create.reset(); }}>Cancel</button>
+            <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setEditingId(null); setForm(EMPTY_FORM); save.reset(); }}>Cancel</button>
             <button
               className="btn-primary flex-1"
-              disabled={!form.title.trim() || !form.dueDate || !form.subjectId || !form.classId || create.isPending}
-              onClick={() => create.mutate(form)}
+                disabled={!form.title.trim() || !form.dueDate || !form.subjectId || !form.classId || save.isPending}
+              onClick={() => save.mutate(form)}
             >
-              {create.isPending ? 'Creating…' : 'Create Assignment'}
+              {save.isPending ? 'Saving…' : editingId ? 'Save Changes' : 'Create Assignment'}
             </button>
           </div>
         </div>

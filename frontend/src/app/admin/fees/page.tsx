@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { feesAPI } from '@/lib/api';
+import { api, feesAPI } from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { DollarSign, TrendingUp, AlertTriangle, CheckCircle2, Clock, Plus, ArrowRight, Download } from 'lucide-react';
+import { DollarSign, TrendingUp, AlertTriangle, CheckCircle2, Clock, Plus, ArrowRight, Download, Pencil } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
 
 type Payment = {
   id: string; amount: number; status: 'PAID' | 'PENDING' | 'OVERDUE' | 'PARTIAL';
@@ -50,7 +51,12 @@ function PaymentCard({ payment, lane }: { payment: Payment; lane: typeof LANES[n
 }
 
 export default function FeesPage() {
+  const { user } = useAuthStore();
+  const canManage = user?.role === 'ADMIN';
+  const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<'kanban' | 'list'>('kanban');
+  const [feeEditor, setFeeEditor] = useState<any>(null);
+  const [feeForm, setFeeForm] = useState({ name: '', amount: '', dueDate: '', description: '', academicYear: '2026-2027' });
 
   const { data: fees } = useQuery({
     queryKey: ['fees'],
@@ -61,6 +67,19 @@ export default function FeesPage() {
     queryKey: ['fee-payments'],
     queryFn: () => feesAPI.payments().then(r => r.data.data),
   });
+
+  const saveFee = useMutation({
+    mutationFn: () => {
+      const body = { ...feeForm, amount: Number(feeForm.amount), dueDate: feeForm.dueDate ? new Date(feeForm.dueDate).toISOString() : null };
+      return feeEditor?.id ? api.put(`/fees/${feeEditor.id}`, body) : api.post('/fees', body);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fees'] }); setFeeEditor(null); },
+  });
+  const openFeeEditor = (fee?: any) => {
+    setFeeEditor(fee || {});
+    setFeeForm(fee ? { name: fee.name, amount: String(fee.amount), dueDate: fee.dueDate ? new Date(fee.dueDate).toISOString().slice(0, 16) : '', description: fee.description || '', academicYear: fee.academicYear } : { name: '', amount: '', dueDate: '', description: '', academicYear: '2026-2027' });
+    saveFee.reset();
+  };
 
   const allPayments: Payment[] = payments as Payment[];
 
@@ -82,6 +101,15 @@ export default function FeesPage() {
   const totalOverdue   = enriched.filter(p => p.status === 'OVERDUE').reduce((s, p) => s + p.amount, 0);
   const collectionRate = enriched.length
     ? Math.round((enriched.filter(p => p.status === 'PAID').length / enriched.length) * 100) : 0;
+  const exportPayments = () => {
+    const rows = [['Student', 'Admission Number', 'Fee', 'Amount', 'Method', 'Status', 'Date'], ...enriched.map(p => [p.student?.user?.name || '', p.student?.admissionNo || '', p.fee?.name || '', String(p.amount), p.method || '', p.status, p.fee?.dueDate || p.createdAt || ''])];
+    const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    link.download = 'school-fee-payments.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
 
   return (
     <DashboardLayout title="Fee Management" allowedRoles={['ADMIN', 'STUDENT']}>
@@ -121,12 +149,12 @@ export default function FeesPage() {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <button className="btn-secondary flex items-center gap-2 text-sm">
+            <button onClick={exportPayments} className="btn-secondary flex items-center gap-2 text-sm">
               <Download className="w-4 h-4" /> Export
             </button>
-            <button className="btn-primary flex items-center gap-2 text-sm">
+            {canManage && <button className="btn-primary flex items-center gap-2 text-sm" onClick={() => openFeeEditor()}>
               <Plus className="w-4 h-4" /> New Fee
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -208,13 +236,11 @@ export default function FeesPage() {
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-gray-900">Fee Structures</h3>
-            <a href="#" className="flex items-center gap-1 text-xs text-primary-600 hover:underline">
-              Manage <ArrowRight className="w-3 h-3" />
-            </a>
+            {canManage && <button onClick={() => openFeeEditor()} className="flex items-center gap-1 text-xs text-primary-600 hover:underline">Add fee structure <ArrowRight className="w-3 h-3" /></button>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
             {(fees || []).map((fee: any) => (
-              <div key={fee.id} className="flex items-center gap-3 p-3 rounded-xl border hover:border-primary-200 hover:bg-primary-50/30 transition-all cursor-default">
+              <div key={fee.id} className="flex items-center gap-3 p-3 rounded-xl border hover:border-primary-200 hover:bg-primary-50/30 transition-all">
                 <div className="w-9 h-9 rounded-xl bg-primary-100 flex items-center justify-center flex-shrink-0">
                   <DollarSign className="w-5 h-5 text-primary-600" />
                 </div>
@@ -223,12 +249,28 @@ export default function FeesPage() {
                   <p className="text-xs text-gray-400">{fee.academicYear}{fee.dueDate ? ` · Due ${formatDate(fee.dueDate)}` : ''}</p>
                 </div>
                 <p className="text-sm font-bold text-green-700 flex-shrink-0">{formatCurrency(fee.amount)}</p>
+                {canManage && <button aria-label={`Edit ${fee.name}`} onClick={() => openFeeEditor(fee)} className="p-1.5 text-gray-400 hover:text-primary-600"><Pencil className="w-4 h-4" /></button>}
               </div>
             ))}
             {!(fees || []).length && <p className="text-sm text-gray-400 col-span-3 py-4 text-center">No fee structures defined</p>}
           </div>
         </div>
       </div>
+      {feeEditor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold mb-4">{feeEditor.id ? 'Edit Fee Structure' : 'New Fee Structure'}</h2>
+            <div className="space-y-3">
+              <label className="label">Fee name<input className="input mt-1" value={feeForm.name} onChange={e => setFeeForm(f => ({ ...f, name: e.target.value }))} /></label>
+              <div className="grid grid-cols-2 gap-3"><label className="label">Amount<input className="input mt-1" type="number" min="0.01" step="0.01" value={feeForm.amount} onChange={e => setFeeForm(f => ({ ...f, amount: e.target.value }))} /></label><label className="label">Academic year<input className="input mt-1" value={feeForm.academicYear} onChange={e => setFeeForm(f => ({ ...f, academicYear: e.target.value }))} /></label></div>
+              <label className="label">Due date (optional)<input className="input mt-1" type="datetime-local" value={feeForm.dueDate} onChange={e => setFeeForm(f => ({ ...f, dueDate: e.target.value }))} /></label>
+              <label className="label">Description<textarea className="input mt-1" rows={3} value={feeForm.description} onChange={e => setFeeForm(f => ({ ...f, description: e.target.value }))} /></label>
+              {saveFee.isError && <p role="alert" className="text-sm text-red-600">Couldn’t save the fee structure. Please check the fields and try again.</p>}
+            </div>
+            <div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setFeeEditor(null)}>Cancel</button><button className="btn-primary flex-1" disabled={!feeForm.name.trim() || !feeForm.amount || !feeForm.academicYear.trim() || saveFee.isPending} onClick={() => saveFee.mutate()}>{saveFee.isPending ? 'Saving…' : 'Save Fee'}</button></div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

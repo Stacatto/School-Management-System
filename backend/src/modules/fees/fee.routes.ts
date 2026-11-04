@@ -9,6 +9,7 @@ router.use(authenticate);
 router.get('/', ctrl.list);
 router.get('/my', ctrl.listMyPayments);
 router.post('/', authorize('ADMIN'), ctrl.create);
+router.put('/:id', authorize('ADMIN'), ctrl.update);
 router.get('/payments', ctrl.listPayments);
 router.post('/payments', ctrl.recordPayment);
 router.post('/payments/stripe-webhook', ctrl.stripeWebhook);

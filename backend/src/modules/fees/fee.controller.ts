@@ -26,8 +26,20 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
 
 export async function create(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const fee = await prisma.fee.create({ data: req.body });
+    const { name, amount, dueDate, description, academicYear } = req.body;
+    const fee = await prisma.fee.create({ data: { name, amount: Number(amount), dueDate: dueDate ? new Date(dueDate) : null, description: description || null, academicYear } });
     return sendSuccess(res, fee, 'Fee structure created', 201);
+  } catch (err) { next(err); }
+}
+
+export async function update(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const { name, amount, dueDate, description, academicYear } = req.body;
+    const fee = await prisma.fee.update({
+      where: { id: req.params.id },
+      data: { name, amount: Number(amount), dueDate: dueDate ? new Date(dueDate) : null, description: description || null, academicYear },
+    });
+    return sendSuccess(res, fee, 'Fee structure updated');
   } catch (err) { next(err); }
 }
 

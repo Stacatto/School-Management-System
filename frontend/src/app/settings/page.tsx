@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { User, Lock, Bell, Palette, Shield, ChevronRight, Check } from 'lucide-react';
 
 type Section = 'profile' | 'security' | 'notifications' | 'appearance';
@@ -39,11 +39,30 @@ export default function SettingsPage() {
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' });
   const [notifPrefs, setNotifPrefs] = useState({ email: true, push: true, assignments: true, grades: true, attendance: true, announcements: true });
   const [theme, setTheme] = useState('light');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaQr, setMfaQr] = useState('');
+  const [mfaEnabled, setMfaEnabled] = useState(false);
+  const { data: currentUser } = useQuery({ queryKey: ['auth-me'], queryFn: () => api.get('/auth/me').then(r => r.data.data) });
+
+  useEffect(() => {
+    if (currentUser) {
+      setProfile({ name: currentUser.name || '', email: currentUser.email || '', phone: currentUser.phone || '' });
+      setMfaEnabled(Boolean(currentUser.mfaEnabled));
+    }
+    const prefs = localStorage.getItem('sms-notification-preferences');
+    const savedTheme = localStorage.getItem('sms-theme');
+    if (prefs) { try { setNotifPrefs(p => ({ ...p, ...JSON.parse(prefs) })); } catch { /* ignore malformed local preferences */ } }
+    if (savedTheme === 'light') setTheme(savedTheme);
+  }, [currentUser]);
 
   const saveProfile = useMutation({
     mutationFn: () => api.patch('/auth/profile', profile),
-    onSuccess: () => { setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    onSuccess: (response) => { useAuthStore.setState({ user: { ...user!, ...response.data.data } }); setSaved(true); setTimeout(() => setSaved(false), 2000); },
   });
+
+  const enableMfa = useMutation({ mutationFn: () => api.post('/auth/mfa/enable'), onSuccess: response => setMfaQr(response.data.data.qrCodeUrl) });
+  const verifyMfa = useMutation({ mutationFn: () => api.post('/auth/mfa/verify', { code: mfaCode }), onSuccess: () => { setMfaEnabled(true); setMfaQr(''); setMfaCode(''); } });
+  const disableMfa = useMutation({ mutationFn: () => api.post('/auth/mfa/disable'), onSuccess: () => setMfaEnabled(false) });
 
   const changePassword = useMutation({
     mutationFn: () => api.post('/auth/change-password', { currentPassword: passwords.current, newPassword: passwords.next }),
@@ -82,8 +101,7 @@ export default function SettingsPage() {
                   {profile.name[0]?.toUpperCase()}
                 </div>
                 <div>
-                  <button className="btn-secondary text-xs py-1.5">Change Photo</button>
-                  <p className="text-xs text-gray-400 mt-1">JPG, PNG up to 2MB</p>
+                  <p className="text-xs text-gray-400">Profile photo upload is not available yet.</p>
                 </div>
               </div>
 
@@ -155,8 +173,9 @@ export default function SettingsPage() {
                     <p className="text-sm font-medium text-gray-900">Two-Factor Authentication</p>
                     <p className="text-xs text-gray-500 mt-0.5">Add an extra layer of security to your account</p>
                   </div>
-                  <button className="btn-secondary text-xs">Enable 2FA</button>
+                  {mfaEnabled ? <button className="btn-secondary text-xs" disabled={disableMfa.isPending} onClick={() => disableMfa.mutate()}>{disableMfa.isPending ? 'Disabling…' : 'Disable 2FA'}</button> : <button className="btn-secondary text-xs" disabled={enableMfa.isPending} onClick={() => enableMfa.mutate()}>{enableMfa.isPending ? 'Setting up…' : 'Enable 2FA'}</button>}
                 </div>
+                {mfaQr && <div className="mt-4 p-4 border rounded-xl space-y-3"><p className="text-sm text-gray-700">Scan this QR code with your authenticator app, then enter the 6-digit code.</p><img src={mfaQr} alt="Authenticator setup QR code" className="w-40 h-40" /><div className="flex gap-2"><input className="input" inputMode="numeric" maxLength={6} value={mfaCode} onChange={e => setMfaCode(e.target.value)} aria-label="Authenticator code" /><button className="btn-primary" disabled={mfaCode.length !== 6 || verifyMfa.isPending} onClick={() => verifyMfa.mutate()}>{verifyMfa.isPending ? 'Verifying…' : 'Verify'}</button></div>{verifyMfa.isError && <p className="text-sm text-red-600">That code wasn’t accepted. Check your authenticator and try again.</p>}</div>}
               </div>
             </div>
           )}
@@ -191,7 +210,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="pt-2 border-t border-gray-100">
-                <button className="btn-primary" onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 2000); }}>
+                <button className="btn-primary" onClick={() => { localStorage.setItem('sms-notification-preferences', JSON.stringify(notifPrefs)); setSaved(true); setTimeout(() => setSaved(false), 2000); }}>
                   {saved ? <><Check className="w-4 h-4" /> Saved</> : 'Save Preferences'}
                 </button>
               </div>
@@ -215,8 +234,9 @@ export default function SettingsPage() {
                   ].map(t => (
                     <button
                       key={t.id}
-                      onClick={() => setTheme(t.id)}
-                      className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${theme === t.id ? 'border-primary-500' : 'border-gray-100 hover:border-gray-200'}`}
+                      disabled={t.id !== 'light'}
+                      onClick={() => { setTheme(t.id); localStorage.setItem('sms-theme', t.id); }}
+                      className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${theme === t.id ? 'border-primary-500' : 'border-gray-100'} ${t.id !== 'light' ? 'opacity-50 cursor-not-allowed' : 'hover:border-gray-200'}`}
                     >
                       <div className={`w-full h-12 rounded-lg ${t.bg} border ${t.border}`} />
                       <span className="text-xs font-medium text-gray-700">{t.label}</span>
@@ -225,7 +245,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <p className="text-xs text-gray-400 italic">Dark mode and system theme coming soon.</p>
+              <p className="text-xs text-gray-400 italic">Only Light theme is currently supported.</p>
             </div>
           )}
         </div>
