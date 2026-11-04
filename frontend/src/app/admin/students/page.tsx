@@ -1,12 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { DataTable } from '@/components/ui/DataTable';
 import { studentsAPI, classesAPI } from '@/lib/api';
-import { Plus, Edit, Trash2, Eye, UserCheck, UserX, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, UserCheck, UserX, CheckCircle, Clock, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '@/lib/utils';
 
@@ -26,6 +26,7 @@ const EMPTY_FORM = { name: '', email: '', password: '', admissionNo: '', classId
 export default function StudentsPage() {
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
   const { data, isLoading } = useQuery({
@@ -49,6 +50,27 @@ export default function StudentsPage() {
     },
     onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to add student'),
   });
+
+  const updateMutation = useMutation({
+    mutationFn: (body: typeof form) => studentsAPI.update(editingStudent!.id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students-all'] });
+      toast.success('Student updated');
+      setShowAdd(false);
+      setEditingStudent(null);
+      setForm(EMPTY_FORM);
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update student'),
+  });
+
+  const openEdit = useCallback((student: Student) => {
+    setEditingStudent(student);
+    studentsAPI.get(student.id).then(({ data: response }) => {
+      const current = response.data;
+      setForm({ name: current.user?.name || '', email: current.user?.email || '', password: '', admissionNo: current.admissionNo || '', classId: current.classId || '', parentName: current.parentName || '', parentPhone: current.parentPhone || '' });
+      setShowAdd(true);
+    }).catch(() => toast.error('Could not load this student'));
+  }, []);
 
   const { data: classesData } = useQuery({
     queryKey: ['classes'],
@@ -144,10 +166,7 @@ export default function StudentsPage() {
       enableSorting: false,
       cell: ({ row }) => (
         <div className="flex items-center gap-0.5 justify-end">
-          <button title="View" className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-primary-600 transition-colors">
-            <Eye className="w-4 h-4" />
-          </button>
-          <button title="Edit" className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors">
+          <button title="Edit" onClick={() => openEdit(row.original)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors">
             <Edit className="w-4 h-4" />
           </button>
           <button
@@ -160,7 +179,7 @@ export default function StudentsPage() {
         </div>
       ),
     },
-  ], [deleteMutation]);
+  ], [deleteMutation, openEdit]);
 
   const active = students.length;
   const classes = [...new Set(students.map(s => s.class?.name).filter(Boolean))].length;
@@ -216,7 +235,7 @@ export default function StudentsPage() {
     {showAdd && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 animate-scale-in">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Add Student</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">{editingStudent ? 'Edit Student' : 'Add Student'}</h2>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -230,8 +249,8 @@ export default function StudentsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="label">Password</label>
-                <input className="input" type="password" placeholder="Temporary password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+                <label className="label">{editingStudent ? 'Password (unchanged)' : 'Password'}</label>
+                {!editingStudent && <input className="input" type="password" placeholder="Temporary password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />}
               </div>
               <div>
                 <label className="label">Admission No.</label>
@@ -259,13 +278,13 @@ export default function StudentsPage() {
             </div>
           </div>
           <div className="flex gap-3 mt-6">
-            <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setForm(EMPTY_FORM); }}>Cancel</button>
+            <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setEditingStudent(null); setForm(EMPTY_FORM); }}>Cancel</button>
             <button
               className="btn-primary flex-1"
-              disabled={!form.name || !form.email || !form.password || createMutation.isPending}
-              onClick={() => createMutation.mutate(form)}
+              disabled={!form.name || !form.email || (!editingStudent && !form.password) || createMutation.isPending || updateMutation.isPending}
+              onClick={() => editingStudent ? updateMutation.mutate(form) : createMutation.mutate(form)}
             >
-              {createMutation.isPending ? 'Adding…' : 'Add Student'}
+              {createMutation.isPending || updateMutation.isPending ? 'Saving…' : editingStudent ? 'Save Changes' : 'Add Student'}
             </button>
           </div>
         </div>

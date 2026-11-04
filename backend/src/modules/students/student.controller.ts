@@ -90,7 +90,24 @@ export async function getOne(req: AuthRequest, res: Response, next: NextFunction
 
 export async function update(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const student = await prisma.student.update({ where: { id: req.params.id }, data: req.body });
+    const { name, email, classId, admissionNo, parentName, parentPhone, parentEmail, gender, dateOfBirth, address } = req.body;
+    const current = await prisma.student.findUniqueOrThrow({ where: { id: req.params.id }, select: { userId: true } });
+    if (email) {
+      const duplicate = await prisma.user.findFirst({ where: { email, NOT: { id: current.userId } }, select: { id: true } });
+      if (duplicate) return sendError(res, 'A user with this email already exists', 409);
+    }
+    if (classId) {
+      const cls = await prisma.class.findUnique({ where: { id: classId }, select: { id: true } });
+      if (!cls) return sendError(res, 'Invalid classId', 400);
+    }
+    const student = await prisma.$transaction(async tx => {
+      if (name || email) await tx.user.update({ where: { id: current.userId }, data: { ...(name ? { name } : {}), ...(email ? { email } : {}) } });
+      return tx.student.update({
+        where: { id: req.params.id },
+        data: { admissionNo, classId: classId || null, parentName, parentPhone, parentEmail, gender, address, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null },
+        include: { user: { select: { name: true, email: true } }, class: true },
+      });
+    });
     await invalidate(`students:${req.params.id}`);
     await invalidatePattern('students:list:*');
     return sendSuccess(res, student, 'Student updated');

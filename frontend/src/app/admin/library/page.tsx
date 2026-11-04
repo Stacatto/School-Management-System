@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { api } from '@/lib/api';
 import { useState } from 'react';
-import { Plus, Search, BookOpen, BookMarked, Clock, CheckCircle } from 'lucide-react';
+import { Plus, Search, BookOpen, BookMarked, Clock, CheckCircle, Pencil } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 
 interface Book {
@@ -30,11 +30,13 @@ const CATEGORY_COLORS: Record<string, string> = {
   Default: 'badge-gray',
 };
 
-function BookCard({ book, onBorrow, onReturn, canManage }: {
+function BookCard({ book, onBorrow, onReturn, canManage, onEdit, canReturn }: {
   book: Book;
   onBorrow: (id: string) => void;
   onReturn: (id: string) => void;
   canManage: boolean;
+  onEdit?: () => void;
+  canReturn: boolean;
 }) {
   const available = book.availableCopies > 0;
   const catColor = CATEGORY_COLORS[book.category || ''] ?? CATEGORY_COLORS.Default;
@@ -45,6 +47,7 @@ function BookCard({ book, onBorrow, onReturn, canManage }: {
         <div className="w-12 h-16 rounded-lg bg-gradient-to-br from-primary-400 to-violet-500 flex items-center justify-center flex-shrink-0 shadow-sm">
           <BookOpen className="w-5 h-5 text-white" />
         </div>
+        {canManage && onEdit && <button aria-label={`Edit ${book.title}`} onClick={onEdit} className="p-1.5 text-gray-400 hover:text-primary-600"><Pencil className="w-4 h-4" /></button>}
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-gray-900 text-sm line-clamp-2 leading-snug">{book.title}</h3>
           <p className="text-xs text-gray-500 mt-0.5">{book.author}</p>
@@ -71,6 +74,7 @@ function BookCard({ book, onBorrow, onReturn, canManage }: {
           </button>
           <button
             className="btn-ghost flex-1 text-xs py-1.5"
+            disabled={!canReturn}
             onClick={() => onReturn(book.id)}
           >
             Return
@@ -88,26 +92,32 @@ export default function LibraryPage() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [form, setForm] = useState({ title: '', author: '', isbn: '', category: '', totalCopies: 1 });
 
   const { data, isLoading } = useQuery({
     queryKey: ['books'],
-    queryFn: () => api.get('/library').then(r => r.data.data),
+    queryFn: () => api.get('/library/books').then(r => r.data.data),
   });
 
+  const { data: borrowings = [] } = useQuery({ queryKey: ['book-borrowings'], queryFn: () => api.get('/library/borrowings').then(r => r.data.data), enabled: role === 'ADMIN' || role === 'TEACHER' });
+  const { data: students = [] } = useQuery({ queryKey: ['students'], queryFn: () => api.get('/students').then(r => r.data.data), enabled: role === 'ADMIN' || role === 'TEACHER' });
+  const [borrowBookId, setBorrowBookId] = useState('');
+  const [borrowForm, setBorrowForm] = useState({ studentId: '', dueDate: '' });
+
   const borrow = useMutation({
-    mutationFn: (bookId: string) => api.post(`/library/${bookId}/borrow`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['books'] }),
+    mutationFn: () => api.post('/library/borrow', { bookId: borrowBookId, studentId: borrowForm.studentId, dueDate: new Date(borrowForm.dueDate).toISOString() }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['books'] }); qc.invalidateQueries({ queryKey: ['book-borrowings'] }); setBorrowBookId(''); },
   });
 
   const returnBook = useMutation({
-    mutationFn: (bookId: string) => api.post(`/library/${bookId}/return`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['books'] }),
+    mutationFn: (borrowingId: string) => api.post(`/library/return/${borrowingId}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['books'] }); qc.invalidateQueries({ queryKey: ['book-borrowings'] }); },
   });
 
   const create = useMutation({
-    mutationFn: (body: typeof form) => api.post('/library', body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['books'] }); setShowAdd(false); },
+    mutationFn: (body: typeof form) => editingBook ? api.put(`/library/books/${editingBook.id}`, body) : api.post('/library/books', body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['books'] }); setShowAdd(false); setEditingBook(null); },
   });
 
   const books: Book[] = (data || []).filter((b: Book) => {
@@ -125,10 +135,10 @@ export default function LibraryPage() {
     <DashboardLayout
       title="Library"
       subtitle={`${(data || []).length} books · ${totalAvailable} available`}
-      allowedRoles={['ADMIN', 'STUDENT']}
+      allowedRoles={['ADMIN', 'TEACHER', 'STUDENT']}
       actions={
         role === 'ADMIN' ? (
-          <button className="btn-primary" onClick={() => setShowAdd(true)}>
+          <button className="btn-primary" onClick={() => { setEditingBook(null); setForm({ title: '', author: '', isbn: '', category: '', totalCopies: 1 }); create.reset(); setShowAdd(true); }}>
             <Plus className="w-4 h-4" /> Add Book
           </button>
         ) : undefined
@@ -180,9 +190,11 @@ export default function LibraryPage() {
               <BookCard
                 key={book.id}
                 book={book}
-                onBorrow={borrow.mutate}
-                onReturn={returnBook.mutate}
-                canManage={role === 'STUDENT' || role === 'ADMIN'}
+                onBorrow={id => { setBorrowBookId(id); setBorrowForm({ studentId: '', dueDate: '' }); }}
+                onReturn={id => { const loan = (borrowings as any[]).find(b => b.bookId === id && !b.returnedAt); if (loan) returnBook.mutate(loan.id); }}
+                canManage={role === 'ADMIN' || role === 'TEACHER'}
+                onEdit={() => { setEditingBook(book); setForm({ title: book.title, author: book.author, isbn: book.isbn || '', category: book.category || '', totalCopies: book.totalCopies }); create.reset(); setShowAdd(true); }}
+                canReturn={(borrowings as any[]).some(b => b.bookId === book.id && !b.returnedAt)}
               />
             ))}
           </div>
@@ -192,7 +204,7 @@ export default function LibraryPage() {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-scale-in">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Add Book</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">{editingBook ? 'Edit Book' : 'Add Book'}</h2>
             <div className="space-y-4">
               <div>
                 <label className="label">Title</label>
@@ -224,12 +236,13 @@ export default function LibraryPage() {
                 disabled={!form.title || !form.author || create.isPending}
                 onClick={() => create.mutate(form)}
               >
-                {create.isPending ? 'Adding…' : 'Add Book'}
+                {create.isPending ? 'Saving…' : editingBook ? 'Save Changes' : 'Add Book'}
               </button>
             </div>
           </div>
         </div>
       )}
+      {borrowBookId && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"><h2 className="text-lg font-semibold mb-4">Record Book Loan</h2><div className="space-y-3"><label className="label">Student<select className="select mt-1" value={borrowForm.studentId} onChange={e => setBorrowForm(f => ({ ...f, studentId: e.target.value }))}><option value="">Select student</option>{(students as any[]).map(s => <option key={s.id} value={s.id}>{s.user?.name} · {s.admissionNo}</option>)}</select></label><label className="label">Due date<input className="input mt-1" type="date" value={borrowForm.dueDate} onChange={e => setBorrowForm(f => ({ ...f, dueDate: e.target.value }))} /></label>{borrow.isError && <p role="alert" className="text-sm text-red-600">Couldn’t record the loan. Check that a copy is available.</p>}</div><div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setBorrowBookId('')}>Cancel</button><button className="btn-primary flex-1" disabled={!borrowForm.studentId || !borrowForm.dueDate || borrow.isPending} onClick={() => borrow.mutate()}>{borrow.isPending ? 'Saving…' : 'Record Loan'}</button></div></div></div>}
     </DashboardLayout>
   );
 }

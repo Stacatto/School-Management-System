@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { api } from '@/lib/api';
 import { useState } from 'react';
-import { Plus, Users, BookOpen, Clock, GraduationCap, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { Plus, Users, BookOpen, Clock, GraduationCap, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Calendar, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Teacher {
@@ -21,7 +21,7 @@ interface Teacher {
 
 const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
 
-function TeacherCard({ teacher }: { teacher: Teacher }) {
+function TeacherCard({ teacher, onEdit }: { teacher: Teacher; onEdit: (teacher: Teacher) => void }) {
   const [open, setOpen] = useState(false);
   const name = teacher.user?.name ?? 'Unknown';
   const slotCount = teacher._count?.timetable ?? 0;
@@ -42,6 +42,9 @@ function TeacherCard({ teacher }: { teacher: Teacher }) {
               {teacher.department && <p className="text-xs text-primary-600 mt-0.5">{teacher.department}</p>}
             </div>
             <div className="flex items-center gap-2">
+              <button aria-label={`Edit ${name}`} onClick={() => onEdit(teacher)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600">
+                <Pencil className="w-4 h-4" />
+              </button>
               <span className={`flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${hasFull ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
                 {hasFull ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
                 {hasFull ? 'Active' : 'Partial'}
@@ -116,6 +119,7 @@ const EMPTY_FORM = { name: '', email: '', phone: '', password: '', employeeNo: '
 export default function TeachersPage() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [search, setSearch] = useState('');
 
@@ -134,6 +138,23 @@ export default function TeachersPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['teachers'] }); qc.invalidateQueries({ queryKey: ['teachers-stats'] }); setShowAdd(false); setForm(EMPTY_FORM); },
     onError: (err: any) => { const msg = err?.response?.data?.message || 'Failed to add teacher'; toast.error(msg); },
   });
+
+  const update = useMutation({
+    mutationFn: (body: typeof form) => api.put(`/teachers/${editingTeacher!.id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['teachers'] });
+      qc.invalidateQueries({ queryKey: ['teachers-stats'] });
+      setShowAdd(false); setEditingTeacher(null); setForm(EMPTY_FORM);
+      toast.success('Teacher updated');
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update teacher'),
+  });
+
+  const openEdit = (teacher: Teacher) => {
+    setEditingTeacher(teacher);
+    setForm({ name: teacher.user?.name || '', email: teacher.user?.email || '', phone: teacher.user?.phone || '', password: '', employeeNo: teacher.employeeNo || '', department: teacher.department || '', qualification: teacher.qualification || '' });
+    setShowAdd(true);
+  };
 
   const teachers: Teacher[] = (data || []).filter((t: Teacher) => {
     const q = search.toLowerCase();
@@ -212,7 +233,7 @@ export default function TeachersPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {teachers.map(t => <TeacherCard key={t.id} teacher={t} />)}
+            {teachers.map(t => <TeacherCard key={t.id} teacher={t} onEdit={openEdit} />)}
           </div>
         )}
       </div>
@@ -220,7 +241,7 @@ export default function TeachersPage() {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 animate-scale-in">
-            <h2 className="text-lg font-semibold text-gray-900 mb-5">Add Teacher</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-5">{editingTeacher ? 'Edit Teacher' : 'Add Teacher'}</h2>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -238,8 +259,8 @@ export default function TeachersPage() {
                   <input className="input" placeholder="+1 (555) 000-0000" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="label">Password</label>
-                  <input className="input" type="password" placeholder="Default: Teacher@123" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+                  <label className="label">{editingTeacher ? 'Password (unchanged)' : 'Password'}</label>
+                  {!editingTeacher && <input className="input" type="password" placeholder="Default: Teacher@123" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -258,13 +279,13 @@ export default function TeachersPage() {
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setForm(EMPTY_FORM); }}>Cancel</button>
+              <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setEditingTeacher(null); setForm(EMPTY_FORM); }}>Cancel</button>
               <button
                 className="btn-primary flex-1"
-                disabled={!form.name || !form.email || create.isPending}
-                onClick={() => create.mutate(form)}
+                disabled={!form.name || !form.email || (!editingTeacher && !form.password) || create.isPending || update.isPending}
+                onClick={() => editingTeacher ? update.mutate(form) : create.mutate(form)}
               >
-                {create.isPending ? 'Adding…' : 'Add Teacher'}
+                {create.isPending || update.isPending ? 'Saving…' : editingTeacher ? 'Save Changes' : 'Add Teacher'}
               </button>
             </div>
           </div>

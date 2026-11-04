@@ -1,210 +1,41 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { classesAPI, api } from '@/lib/api';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
+import { Pencil, Plus } from 'lucide-react';
 
-const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'] as const;
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-
-const HOURS = Array.from({ length: 10 }, (_, i) => i + 7); // 07:00–16:00
-
-const SUBJECT_COLORS = [
-  'bg-indigo-100 text-indigo-800 border-indigo-200',
-  'bg-violet-100 text-violet-800 border-violet-200',
-  'bg-cyan-100 text-cyan-800 border-cyan-200',
-  'bg-green-100 text-green-800 border-green-200',
-  'bg-orange-100 text-orange-800 border-orange-200',
-  'bg-pink-100 text-pink-800 border-pink-200',
-  'bg-yellow-100 text-yellow-800 border-yellow-200',
-  'bg-teal-100 text-teal-800 border-teal-200',
-];
-
-function timeToMinutes(t: string): number {
-  const [h, m] = t.split(':').map(Number);
-  return h * 60 + (m || 0);
-}
-
-function minutesToPx(minutes: number, startMinutes: number, pxPerHour: number): number {
-  return ((minutes - startMinutes) / 60) * pxPerHour;
-}
+const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
+const EMPTY = { subjectId: '', teacherId: '', dayOfWeek: 'MONDAY', startTime: '08:00', endTime: '09:00', room: '' };
 
 export default function TimetablePage() {
+  const { user } = useAuthStore();
+  const canEdit = user?.role === 'ADMIN';
+  const qc = useQueryClient();
   const [selectedClass, setSelectedClass] = useState('');
-  const [weekOffset, setWeekOffset] = useState(0);
-  const PX_PER_HOUR = 80;
-  const START_HOUR = 7;
-  const TOTAL_HEIGHT = HOURS.length * PX_PER_HOUR;
-
-  const { data: classes } = useQuery({
-    queryKey: ['classes'],
-    queryFn: () => classesAPI.list().then(r => r.data.data),
+  const [editingSlot, setEditingSlot] = useState<any>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY);
+  const { data: classes = [] } = useQuery({ queryKey: ['classes'], queryFn: () => classesAPI.list().then(r => r.data.data?.data ?? r.data.data ?? []) });
+  const { data: slots = [], isLoading } = useQuery({ queryKey: ['timetable', selectedClass], queryFn: () => api.get('/timetable', { params: { classId: selectedClass } }).then(r => r.data.data), enabled: !!selectedClass });
+  const { data: subjects = [] } = useQuery({ queryKey: ['subjects'], queryFn: () => api.get('/subjects').then(r => r.data.data), enabled: canEdit });
+  const { data: teachers = [] } = useQuery({ queryKey: ['teachers'], queryFn: () => api.get('/teachers').then(r => r.data.data), enabled: canEdit });
+  const save = useMutation({
+    mutationFn: () => editingSlot ? api.put(`/timetable/${editingSlot.id}`, { ...form, classId: selectedClass, room: form.room || null }) : api.post('/timetable', { ...form, classId: selectedClass, room: form.room || null }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['timetable', selectedClass] }); setEditorOpen(false); setEditingSlot(null); },
   });
+  const openEditor = (slot?: any) => { setEditingSlot(slot || null); setForm(slot ? { subjectId: slot.subjectId, teacherId: slot.teacherId, dayOfWeek: slot.dayOfWeek, startTime: slot.startTime, endTime: slot.endTime, room: slot.room || '' } : EMPTY); save.reset(); setEditorOpen(true); };
 
-  const { data: timetable = [] } = useQuery({
-    queryKey: ['timetable', selectedClass],
-    queryFn: () => api.get(`/api/v1/timetable?classId=${selectedClass}`).then(r => r.data.data),
-    enabled: !!selectedClass,
-  });
-
-  // Assign a stable color per subject
-  const subjectColorMap: Record<string, string> = {};
-  let colorIdx = 0;
-  (timetable as any[]).forEach((slot: any) => {
-    const key = slot.subject?.id || slot.subjectId;
-    if (key && !subjectColorMap[key]) {
-      subjectColorMap[key] = SUBJECT_COLORS[colorIdx % SUBJECT_COLORS.length];
-      colorIdx++;
-    }
-  });
-
-  const now = new Date();
-  const todayDay = DAYS[now.getDay() - 1] as string;
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const nowPx = minutesToPx(nowMinutes, START_HOUR * 60, PX_PER_HOUR);
-
-  return (
-    <DashboardLayout title="Timetable">
-      <div className="space-y-5">
-        {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="input w-48">
-              <option value="">Select class…</option>
-              {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          {selectedClass && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <button onClick={() => setWeekOffset(w => w - 1)}
-                className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="font-medium px-2">
-                {weekOffset === 0 ? 'This Week' : weekOffset === 1 ? 'Next Week' : weekOffset === -1 ? 'Last Week' : `Week ${weekOffset > 0 ? '+' : ''}${weekOffset}`}
-              </span>
-              <button onClick={() => setWeekOffset(w => w + 1)}
-                className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              {weekOffset !== 0 && (
-                <button onClick={() => setWeekOffset(0)} className="text-xs text-primary-600 hover:underline ml-1">Today</button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {selectedClass ? (
-          <div className="card !p-0 overflow-hidden">
-            {/* Day headers */}
-            <div className="grid border-b bg-gray-50" style={{ gridTemplateColumns: '56px repeat(5, 1fr)' }}>
-              <div className="border-r" />
-              {DAYS.map((day, i) => {
-                const isToday = day === todayDay && weekOffset === 0;
-                return (
-                  <div key={day} className={`py-3 px-3 border-r last:border-r-0 ${isToday ? 'bg-primary-50' : ''}`}>
-                    <p className={`text-xs font-semibold uppercase tracking-wide ${isToday ? 'text-primary-600' : 'text-gray-400'}`}>
-                      {DAY_LABELS[i]}
-                    </p>
-                    {isToday && <p className="text-xs text-primary-400 mt-0.5">Today</p>}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Time grid */}
-            <div className="overflow-x-auto">
-              <div className="grid min-w-[600px]" style={{ gridTemplateColumns: '56px repeat(5, 1fr)' }}>
-                {/* Time labels */}
-                <div className="relative border-r" style={{ height: TOTAL_HEIGHT }}>
-                  {HOURS.map(h => (
-                    <div key={h} className="absolute w-full flex items-start justify-end pr-2"
-                      style={{ top: (h - START_HOUR) * PX_PER_HOUR, height: PX_PER_HOUR }}>
-                      <span className="text-[10px] text-gray-400 -translate-y-1.5">{h}:00</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Day columns */}
-                {DAYS.map((day, di) => {
-                  const slotsForDay = (timetable as any[]).filter((s: any) => s.dayOfWeek === day);
-                  const isToday = day === todayDay && weekOffset === 0;
-                  return (
-                    <div key={day} className={`relative border-r last:border-r-0 ${isToday ? 'bg-primary-50/30' : ''}`}
-                      style={{ height: TOTAL_HEIGHT }}>
-                      {/* Hour lines */}
-                      {HOURS.map(h => (
-                        <div key={h} className="absolute w-full border-t border-gray-100"
-                          style={{ top: (h - START_HOUR) * PX_PER_HOUR }} />
-                      ))}
-
-                      {/* Now indicator */}
-                      {isToday && nowPx > 0 && nowPx < TOTAL_HEIGHT && (
-                        <div className="absolute w-full z-20 flex items-center" style={{ top: nowPx }}>
-                          <div className="w-2 h-2 rounded-full bg-red-500 -ml-1 flex-shrink-0" />
-                          <div className="flex-1 border-t-2 border-red-400 border-dashed" />
-                        </div>
-                      )}
-
-                      {/* Slots */}
-                      {slotsForDay.map((slot: any) => {
-                        const top = minutesToPx(timeToMinutes(slot.startTime), START_HOUR * 60, PX_PER_HOUR);
-                        const height = minutesToPx(timeToMinutes(slot.endTime), timeToMinutes(slot.startTime), PX_PER_HOUR);
-                        const colorClass = subjectColorMap[slot.subject?.id || slot.subjectId] || SUBJECT_COLORS[0];
-                        return (
-                          <div key={slot.id}
-                            className={`absolute inset-x-1 rounded-lg border px-2 py-1 overflow-hidden z-10 group cursor-default transition-all hover:shadow-md hover:z-30 ${colorClass}`}
-                            style={{ top: top + 2, height: Math.max(height - 4, 28) }}>
-                            <p className="text-xs font-semibold truncate leading-tight">{slot.subject?.name}</p>
-                            {height > 40 && (
-                              <>
-                                <p className="text-[10px] opacity-70 truncate">{slot.teacher?.user?.name || '—'}</p>
-                                <p className="text-[10px] opacity-60">{slot.startTime}–{slot.endTime}{slot.room ? ` · ${slot.room}` : ''}</p>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {slotsForDay.length === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <span className="text-xs text-gray-200 rotate-90 tracking-widest uppercase">free</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="card text-center py-16">
-            <div className="w-16 h-16 rounded-2xl bg-gray-50 border-2 border-dashed border-gray-200 flex items-center justify-center mx-auto mb-3">
-              <span className="text-2xl">📅</span>
-            </div>
-            <p className="text-gray-500 font-medium">Select a class to view its timetable</p>
-          </div>
-        )}
-
-        {/* Legend */}
-        {selectedClass && Object.keys(subjectColorMap).length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {(timetable as any[])
-              .filter((slot: any, i: number, arr: any[]) => arr.findIndex((s: any) => (s.subject?.id || s.subjectId) === (slot.subject?.id || slot.subjectId)) === i)
-              .map((slot: any) => {
-                const key = slot.subject?.id || slot.subjectId;
-                return (
-                  <span key={key} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${subjectColorMap[key]}`}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                    {slot.subject?.name}
-                  </span>
-                );
-              })}
-          </div>
-        )}
-      </div>
-    </DashboardLayout>
-  );
+  return <DashboardLayout title="Timetable">
+    <div className="space-y-5">
+      <div className="flex justify-between items-center gap-3"><select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="input w-56"><option value="">Select class…</option>{classes.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>{canEdit && selectedClass && <button className="btn-primary" onClick={() => openEditor()}><Plus className="w-4 h-4" /> Add Period</button>}</div>
+      {!selectedClass ? <div className="card text-center py-16"><p className="text-gray-500 font-medium">Select a class to view its timetable</p></div> : isLoading ? <div className="card skeleton h-64" /> : <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">{DAYS.map(day => {
+        const daySlots = (slots as any[]).filter(slot => slot.dayOfWeek === day).sort((a, b) => a.startTime.localeCompare(b.startTime));
+        return <section key={day} className="card min-h-52"><h2 className="font-semibold text-gray-700 border-b pb-2 mb-3">{day.charAt(0) + day.slice(1).toLowerCase()}</h2>{daySlots.length ? <div className="space-y-2">{daySlots.map(slot => <div key={slot.id} className="rounded-xl border border-primary-100 bg-primary-50/60 p-3"><div className="flex justify-between gap-2"><p className="font-medium text-sm text-gray-900">{slot.subject?.name || 'Subject'}</p>{canEdit && <button aria-label="Edit timetable period" onClick={() => openEditor(slot)} className="text-gray-400 hover:text-primary-600"><Pencil className="w-4 h-4" /></button>}</div><p className="text-xs text-gray-600 mt-1">{slot.startTime}–{slot.endTime}</p><p className="text-xs text-gray-500">{slot.teacher?.user?.name || 'Teacher not set'}{slot.room ? ` · ${slot.room}` : ''}</p></div>)}</div> : <p className="text-sm text-gray-300 text-center py-6">No periods</p>}</section>;
+      })}</div>}
+    </div>
+    {editorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6"><h2 className="text-lg font-semibold mb-4">{editingSlot ? 'Edit Period' : 'Add Period'}</h2><div className="grid grid-cols-2 gap-3"><label className="label">Subject<select className="select mt-1" value={form.subjectId} onChange={e => setForm(f => ({ ...f, subjectId: e.target.value }))}><option value="">Select subject</option>{subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label className="label">Teacher<select className="select mt-1" value={form.teacherId} onChange={e => setForm(f => ({ ...f, teacherId: e.target.value }))}><option value="">Select teacher</option>{teachers.map((t: any) => <option key={t.id} value={t.id}>{t.user?.name || t.name}</option>)}</select></label><label className="label">Day<select className="select mt-1" value={form.dayOfWeek} onChange={e => setForm(f => ({ ...f, dayOfWeek: e.target.value }))}>{DAYS.map(day => <option key={day} value={day}>{day.charAt(0) + day.slice(1).toLowerCase()}</option>)}</select></label><label className="label">Room<input className="input mt-1" value={form.room} onChange={e => setForm(f => ({ ...f, room: e.target.value }))} /></label><label className="label">Start<input type="time" className="input mt-1" value={form.startTime} onChange={e => setForm(f => ({ ...f, startTime: e.target.value }))} /></label><label className="label">End<input type="time" className="input mt-1" value={form.endTime} onChange={e => setForm(f => ({ ...f, endTime: e.target.value }))} /></label></div>{save.isError && <p role="alert" className="text-sm text-red-600 mt-3">Couldn’t save this period. Check that all fields are valid.</p>}<div className="flex gap-3 mt-6"><button className="btn-secondary flex-1" onClick={() => setEditorOpen(false)}>Cancel</button><button className="btn-primary flex-1" disabled={!form.subjectId || !form.teacherId || form.endTime <= form.startTime || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save Period'}</button></div></div></div>}
+  </DashboardLayout>;
 }

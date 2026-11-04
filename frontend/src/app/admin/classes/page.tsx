@@ -4,7 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { api } from '@/lib/api';
 import { useState } from 'react';
-import { Plus, Users, BookOpen, ChevronDown, ChevronUp, GraduationCap } from 'lucide-react';
+import { Plus, Users, BookOpen, ChevronDown, ChevronUp, GraduationCap, Pencil } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
 
 interface Class {
   id: string;
@@ -16,7 +17,7 @@ interface Class {
   subjects?: { name: string }[];
 }
 
-function ClassCard({ cls }: { cls: Class }) {
+function ClassCard({ cls, canEdit, onEdit }: { cls: Class; canEdit: boolean; onEdit: (cls: Class) => void }) {
   const [open, setOpen] = useState(false);
 
   const colors = ['bg-blue-50 text-blue-700', 'bg-violet-50 text-violet-700', 'bg-green-50 text-green-700', 'bg-orange-50 text-orange-700', 'bg-rose-50 text-rose-700'];
@@ -34,9 +35,12 @@ function ClassCard({ cls }: { cls: Class }) {
               <h3 className="font-semibold text-gray-900">{cls.name}</h3>
               <p className="text-xs text-gray-500 mt-0.5">Grade {cls.grade}{cls.section ? ` · Section ${cls.section}` : ''}</p>
             </div>
+            <div className="flex items-center gap-1">
+            {canEdit && <button aria-label={`Edit ${cls.name}`} onClick={() => onEdit(cls)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600"><Pencil className="w-4 h-4" /></button>}
             <button onClick={() => setOpen(o => !o)} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
               {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
             </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-4 mt-3">
@@ -79,8 +83,11 @@ function ClassCard({ cls }: { cls: Class }) {
 }
 
 export default function ClassesPage() {
+  const { user } = useAuthStore();
+  const canManage = user?.role === 'ADMIN';
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [editingClass, setEditingClass] = useState<Class | null>(null);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` });
 
@@ -92,7 +99,7 @@ export default function ClassesPage() {
   const { data: teachersData } = useQuery({
     queryKey: ['teachers'],
     queryFn: () => api.get('/teachers').then(r => r.data.data).catch(() => []),
-    enabled: showAdd,
+    enabled: showAdd && canManage,
   });
 
   const create = useMutation({
@@ -103,6 +110,17 @@ export default function ClassesPage() {
       setForm({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` });
     },
   });
+
+  const update = useMutation({
+    mutationFn: (body: typeof form) => api.put(`/classes/${editingClass!.id}`, body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['classes'] }); setShowAdd(false); setEditingClass(null); },
+  });
+
+  const openEdit = (cls: Class) => {
+    setEditingClass(cls);
+    setForm({ name: cls.name, grade: cls.grade, section: cls.section || '', teacherId: cls.teacher?.id || '', academicYear: (cls as any).academicYear || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` });
+    setShowAdd(true);
+  };
 
   const classes: Class[] = (data || []).filter((c: Class) =>
     !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.grade.toLowerCase().includes(search.toLowerCase())
@@ -120,9 +138,9 @@ export default function ClassesPage() {
       subtitle={`${(data || []).length} classes across all grades`}
       allowedRoles={['ADMIN', 'TEACHER']}
       actions={
-        <button className="btn-primary" onClick={() => setShowAdd(true)}>
+        canManage ? <button className="btn-primary" onClick={() => { setEditingClass(null); setShowAdd(true); }}>
           <Plus className="w-4 h-4" /> New Class
-        </button>
+        </button> : undefined
       }
     >
       <div className="space-y-6">
@@ -166,7 +184,7 @@ export default function ClassesPage() {
             <div key={grade}>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">{grade}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {gradeClasses.map(cls => <ClassCard key={cls.id} cls={cls} />)}
+                {gradeClasses.map(cls => <ClassCard key={cls.id} cls={cls} canEdit={canManage} onEdit={openEdit} />)}
               </div>
             </div>
           ))
@@ -176,7 +194,7 @@ export default function ClassesPage() {
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-scale-in">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">New Class</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">{editingClass ? 'Edit Class' : 'New Class'}</h2>
             <div className="space-y-4">
               <div>
                 <label className="label">Class Name</label>
@@ -207,13 +225,13 @@ export default function ClassesPage() {
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button className="btn-secondary flex-1" onClick={() => setShowAdd(false)}>Cancel</button>
+              <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setEditingClass(null); }}>Cancel</button>
               <button
                 className="btn-primary flex-1"
-                disabled={!form.name || !form.grade || create.isPending}
-                onClick={() => create.mutate(form)}
+                disabled={!form.name || !form.grade || create.isPending || update.isPending}
+                onClick={() => editingClass ? update.mutate(form) : create.mutate(form)}
               >
-                {create.isPending ? 'Creating…' : 'Create Class'}
+                {create.isPending || update.isPending ? 'Saving…' : editingClass ? 'Save Changes' : 'Create Class'}
               </button>
             </div>
           </div>

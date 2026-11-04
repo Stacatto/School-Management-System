@@ -14,7 +14,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
       if (teacherId) where.teacherId = teacherId;
       return prisma.timetableSlot.findMany({
         where,
-        include: { subject: true, teacher: true, class: true },
+        include: { subject: true, teacher: { include: { user: { select: { name: true } } } }, class: true },
         orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
       });
     });

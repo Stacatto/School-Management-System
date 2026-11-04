@@ -5,10 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { Send, MessageSquare, Search, Plus, Smile, Paperclip, Check, CheckCheck } from 'lucide-react';
+import { Send, MessageSquare, Search, Plus, Check, CheckCheck, X } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
-
-const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 function Avatar({ name, size = 'md' }: { name?: string; size?: 'sm' | 'md' | 'lg' }) {
   const s = size === 'sm' ? 'w-7 h-7 text-xs' : size === 'lg' ? 'w-11 h-11 text-base' : 'w-9 h-9 text-sm';
@@ -26,10 +24,17 @@ export default function MessagesPage() {
   const [selectedConv, setSelectedConv] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
-  const [reactingTo, setReactingTo] = useState<string | null>(null);
+  const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [recipientId, setRecipientId] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const queryClient = useQueryClient();
+
+  const { data: recipients = [] } = useQuery({ queryKey: ['message-recipients'], queryFn: () => api.get('/messages/recipients').then(r => r.data.data), enabled: newConversationOpen });
+  const createConversation = useMutation({
+    mutationFn: () => api.post('/messages/conversations', { recipientId }),
+    onSuccess: response => { setSelectedConv(response.data.data.id); setNewConversationOpen(false); setRecipientId(''); queryClient.invalidateQueries({ queryKey: ['conversations'] }); },
+  });
 
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations'],
@@ -39,7 +44,7 @@ export default function MessagesPage() {
 
   const { data: messages = [] } = useQuery({
     queryKey: ['messages', selectedConv],
-    queryFn: () => api.get(`/api/v1/messages/conversations/${selectedConv}/messages`).then(r => r.data.data),
+    queryFn: () => api.get(`/messages/conversations/${selectedConv}/messages`).then(r => r.data.data),
     enabled: !!selectedConv,
     refetchInterval: 3000,
   });
@@ -93,7 +98,7 @@ export default function MessagesPage() {
           <div className="p-4 border-b">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold text-gray-900">Messages</h2>
-              <button className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors" title="New conversation">
+              <button onClick={() => setNewConversationOpen(true)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors" title="New conversation">
                 <Plus className="w-4 h-4 text-gray-500" />
               </button>
             </div>
@@ -224,14 +229,6 @@ export default function MessagesPage() {
                                 )}
                               </div>
 
-                              {/* Reaction picker (appears on hover) */}
-                              <div className={`absolute ${isMine ? 'right-0 -left-24' : 'left-0'} -top-7 hidden group-hover:flex gap-0.5 bg-white border rounded-xl shadow-md px-2 py-1 z-20`}>
-                                {REACTIONS.map(emoji => (
-                                  <button key={emoji} className="hover:scale-125 transition-transform text-base">
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
                             </div>
                           </div>
                         );
@@ -245,9 +242,6 @@ export default function MessagesPage() {
               {/* Input */}
               <div className="px-4 py-3 border-t bg-white">
                 <div className="flex items-end gap-2 bg-gray-100 rounded-2xl px-4 py-2">
-                  <button className="text-gray-400 hover:text-gray-600 transition-colors pb-1 flex-shrink-0">
-                    <Paperclip className="w-4 h-4" />
-                  </button>
                   <textarea
                     ref={inputRef}
                     value={message}
@@ -258,9 +252,6 @@ export default function MessagesPage() {
                     className="flex-1 bg-transparent border-0 outline-none resize-none text-sm placeholder:text-gray-400 max-h-32"
                     style={{ minHeight: '24px' }}
                   />
-                  <button className="text-gray-400 hover:text-gray-600 transition-colors pb-1 flex-shrink-0">
-                    <Smile className="w-4 h-4" />
-                  </button>
                   <button
                     onClick={handleSend}
                     disabled={!message.trim() || sendMutation.isPending}
@@ -279,13 +270,14 @@ export default function MessagesPage() {
               </div>
               <p className="text-gray-600 font-semibold text-lg">Your messages</p>
               <p className="text-gray-400 text-sm mt-1 max-w-xs">Select a conversation from the left or start a new one</p>
-              <button className="btn-primary mt-4 flex items-center gap-2 text-sm">
+              <button onClick={() => setNewConversationOpen(true)} className="btn-primary mt-4 flex items-center gap-2 text-sm">
                 <Plus className="w-4 h-4" /> New Message
               </button>
             </div>
           )}
         </div>
       </div>
+      {newConversationOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"><div className="flex items-center justify-between mb-4"><h2 className="text-lg font-semibold">New conversation</h2><button aria-label="Close" onClick={() => setNewConversationOpen(false)} className="p-2 text-gray-500"><X className="w-4 h-4" /></button></div><label className="label">Choose a person<select className="select mt-1" value={recipientId} onChange={e => setRecipientId(e.target.value)}><option value="">Select person…</option>{(recipients as any[]).map(person => <option key={person.id} value={person.id}>{person.name} · {person.role}</option>)}</select></label>{createConversation.isError && <p className="text-sm text-red-600 mt-2">Couldn’t open that conversation. Please try again.</p>}<div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setNewConversationOpen(false)}>Cancel</button><button className="btn-primary flex-1" disabled={!recipientId || createConversation.isPending} onClick={() => createConversation.mutate()}>{createConversation.isPending ? 'Opening…' : 'Open Conversation'}</button></div></div></div>}
     </DashboardLayout>
   );
 }

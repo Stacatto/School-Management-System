@@ -75,7 +75,20 @@ export async function getOne(req: AuthRequest, res: Response, next: NextFunction
 
 export async function update(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const teacher = await prisma.teacher.update({ where: { id: req.params.id }, data: req.body });
+    const { name, email, phone, employeeNo, department, qualification } = req.body;
+    const current = await prisma.teacher.findUniqueOrThrow({ where: { id: req.params.id }, select: { userId: true } });
+    if (email) {
+      const duplicate = await prisma.user.findFirst({ where: { email, NOT: { id: current.userId } }, select: { id: true } });
+      if (duplicate) return res.status(409).json({ success: false, message: 'A user with this email already exists' });
+    }
+    const teacher = await prisma.$transaction(async tx => {
+      if (name || email || phone !== undefined) await tx.user.update({ where: { id: current.userId }, data: { ...(name ? { name } : {}), ...(email ? { email } : {}), ...(phone !== undefined ? { phone } : {}) } });
+      return tx.teacher.update({
+        where: { id: req.params.id },
+        data: { employeeNo, department, qualification },
+        include: { user: { select: { name: true, email: true, phone: true } } },
+      });
+    });
     return sendSuccess(res, teacher, 'Teacher updated');
   } catch (err) { next(err); }
 }

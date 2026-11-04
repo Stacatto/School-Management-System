@@ -17,7 +17,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
         where, skip: (page - 1) * limit, take: limit,
         include: {
           subject: true,
-          class: { select: { name: true, _count: { select: { students: true } } } },
+          class: { select: { id: true, name: true, _count: { select: { students: true } } } },
           createdBy: { select: { name: true } },
           _count: { select: { submissions: true } },
         },

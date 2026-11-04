@@ -64,7 +64,7 @@ function ChildCard({ childId, isExpanded, onToggle }: {
 }) {
   const { data: overview, isLoading } = useQuery({
     queryKey: ['child-overview', childId],
-    queryFn: () => api.get(`/api/v1/parent/children/${childId}/overview`).then(r => r.data.data),
+    queryFn: () => api.get(`/parent/children/${childId}/overview`).then(r => r.data.data),
   });
 
   const { data: childData } = useQuery({

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { attendanceAPI, classesAPI, api } from '@/lib/api';
@@ -38,12 +38,20 @@ export default function AttendancePage() {
     queryKey: ['class-students', selectedClass],
     queryFn: () => api.get(`/classes/${selectedClass}/students`).then(r => r.data.data),
     enabled: !!selectedClass,
-    onSuccess: (data: any[]) => {
-      const map: Record<string, Status> = {};
-      data.forEach((s: any) => { map[s.id] = 'PRESENT'; });
-      setStatusMap(map);
-    },
   } as any);
+
+  const { data: savedAttendance = [] } = useQuery({
+    queryKey: ['attendance', selectedClass, date],
+    queryFn: () => attendanceAPI.list({ classId: selectedClass, date }).then(r => r.data.data),
+    enabled: !!selectedClass,
+  });
+
+  useEffect(() => {
+    const existing = new Map((savedAttendance as any[]).map(record => [record.studentId, record.status as Status]));
+    const map: Record<string, Status> = {};
+    students.forEach((student: any) => { map[student.id] = existing.get(student.id) || 'PRESENT'; });
+    setStatusMap(map);
+  }, [selectedClass, date, students, savedAttendance]);
 
   const markMutation = useMutation({
     mutationFn: () =>

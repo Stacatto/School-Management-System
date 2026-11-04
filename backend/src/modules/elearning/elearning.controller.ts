@@ -9,7 +9,7 @@ export async function listCourses(req: AuthRequest, res: Response, next: NextFun
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const search = (req.query.search as string) || '';
-    const where: any = { status: 'PUBLISHED' };
+    const where: any = req.user?.role === 'ADMIN' || req.user?.role === 'TEACHER' ? {} : { status: 'PUBLISHED' };
     if (search) where.title = { contains: search, mode: 'insensitive' };
 
     const [courses, total] = await Promise.all([

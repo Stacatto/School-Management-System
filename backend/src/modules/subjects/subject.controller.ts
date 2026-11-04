@@ -26,3 +26,17 @@ export async function create(req: AuthRequest, res: Response, next: NextFunction
     return sendSuccess(res, subject, 'Subject created', 201);
   } catch (err) { next(err); }
 }
+
+export async function update(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+    const code = typeof req.body.code === 'string' ? req.body.code.trim().toUpperCase() : '';
+    const credits = Number(req.body.credits);
+    if (!name || !code) return sendError(res, 'Subject name and code are required', 400);
+    if (!Number.isInteger(credits) || credits < 1) return sendError(res, 'Credits must be a positive whole number', 400);
+    const duplicate = await prisma.subject.findFirst({ where: { code, NOT: { id: req.params.id } }, select: { id: true } });
+    if (duplicate) return sendError(res, 'A subject with this code already exists', 409);
+    const subject = await prisma.subject.update({ where: { id: req.params.id }, data: { name, code, credits } });
+    return sendSuccess(res, subject, 'Subject updated');
+  } catch (err) { next(err); }
+}
