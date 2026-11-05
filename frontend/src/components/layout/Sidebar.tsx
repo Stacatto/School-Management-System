@@ -172,7 +172,7 @@ export function Sidebar() {
                 return (
                   <Link
                     key={item.href}
-                    href={item.href}
+                    href={item.href} onClick={(event) => pathname === '/admin/attendance' && (event.preventDefault(), window.location.assign(item.href))}
                     title={collapsed ? item.label : undefined}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
