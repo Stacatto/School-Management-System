@@ -289,14 +289,14 @@ export default function AssignmentsPage() {
       };
       return editingId ? api.put(`/assignments/${editingId}`, payload) : api.post('/assignments', payload);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['assignments'] }); setShowAdd(false); setEditingId(null); setForm(EMPTY_FORM); },
+    onSuccess: async (response) => { const updated = response.data.data; qc.setQueryData<Assignment[]>(['assignments'], (current = []) => current.map(assignment => assignment.id === updated.id ? { ...assignment, ...updated } : assignment)); await qc.invalidateQueries({ queryKey: ['assignments'] }); setShowAdd(false); setEditingId(null); setForm(EMPTY_FORM); },
   });
   const openEditor = (assignment?: Assignment) => {
     setEditingId(assignment?.id ?? null);
     setForm(assignment ? {
       title: assignment.title,
       description: assignment.description || '',
-      dueDate: new Date(assignment.dueDate).toISOString().slice(0, 16),
+      dueDate: (() => { const dueDate = new Date(assignment.dueDate); dueDate.setMinutes(dueDate.getMinutes() - dueDate.getTimezoneOffset()); return dueDate.toISOString().slice(0, 16); })(),
       subjectId: assignment.subjectId || '',
       classId: assignment.classId || '',
       totalPoints: String(assignment.totalPoints ?? 100),
