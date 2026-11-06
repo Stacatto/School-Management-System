@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { sendSuccess, sendError } from '../../utils/apiResponse';
+import { notifyUsers } from '../../utils/inAppNotifications';
 import { getIO } from '../../config/socket';
 import {
   createPayPalOrder as ppCreate,
@@ -60,7 +61,7 @@ export async function assignFee(req: AuthRequest, res: Response, next: NextFunct
     const uniqueStudentIds = [...new Set<string>(studentIds)];
     const [fee, students] = await Promise.all([
       prisma.fee.findUnique({ where: { id: feeId } }),
-      prisma.student.findMany({ where: { id: { in: uniqueStudentIds } }, select: { id: true } }),
+      prisma.student.findMany({ where: { id: { in: uniqueStudentIds } }, select: { id: true, userId: true, parentEmail: true } }),
     ]);
     if (!fee) return sendError(res, 'Fee structure not found', 404);
     if (students.length !== uniqueStudentIds.length) return sendError(res, 'One or more students could not be found', 400);
@@ -72,6 +73,9 @@ export async function assignFee(req: AuthRequest, res: Response, next: NextFunct
         create: { feeId, studentId, amount: fee.amount, dueDate: fee.dueDate },
       })
     ));
+    const parentEmails = [...new Set(students.map(student => student.parentEmail).filter((email): email is string => Boolean(email)))];
+    const parents = await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true } });
+    await notifyUsers([...students.map(student => student.userId), ...parents.map(parent => parent.id)], 'Fee assigned', `${fee.name} has been assigned to your account.`);
     return sendSuccess(res, assignments, `Fee assigned to ${assignments.length} student${assignments.length === 1 ? '' : 's'}`, 201);
   } catch (err) { next(err); }
 }

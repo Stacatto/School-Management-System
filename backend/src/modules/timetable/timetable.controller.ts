@@ -24,12 +24,20 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
 
 export async function listMy(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
-    if (!teacher) return sendSuccess(res, []);
-    const slots = await withCache(`timetable:my:${teacher.id}`, 600, () =>
+    let where: any;
+    if (req.user!.role === 'STUDENT') {
+      const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { classId: true } });
+      if (!student?.classId) return sendSuccess(res, []);
+      where = { classId: student.classId };
+    } else {
+      const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
+      if (!teacher) return sendSuccess(res, []);
+      where = { teacherId: teacher.id };
+    }
+    const slots = await withCache(`timetable:my:${req.user!.id}`, 600, () =>
       prisma.timetableSlot.findMany({
-        where: { teacherId: teacher.id },
-        include: { subject: true, class: true },
+        where,
+        include: { subject: true, class: true, teacher: { include: { user: { select: { name: true } } } } },
         orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
       })
     );
@@ -71,11 +79,12 @@ async function validateSlot(body: any): Promise<string | null> {
   if (!validDays.has(body.dayOfWeek)) return 'Choose a valid day';
   if (typeof body.startTime !== 'string' || !validTime.test(body.startTime) || typeof body.endTime !== 'string' || !validTime.test(body.endTime) || body.endTime <= body.startTime) return 'Enter a valid start and end time';
   const [classRow, subject, teacher] = await Promise.all([
-    prisma.class.findUnique({ where: { id: body.classId }, select: { id: true } }),
+    prisma.class.findUnique({ where: { id: body.classId }, include: { subjects: { select: { id: true } } } }),
     prisma.subject.findUnique({ where: { id: body.subjectId }, select: { id: true } }),
     prisma.teacher.findUnique({ where: { id: body.teacherId }, select: { id: true } }),
   ]);
   if (!classRow || !subject || !teacher) return 'The selected class, subject, or teacher no longer exists';
+  if (!classRow.subjects.some(item => item.id === body.subjectId)) return 'Add this subject to the class before scheduling the period';
   return null;
 }
 

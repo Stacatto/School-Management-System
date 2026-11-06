@@ -82,7 +82,7 @@ function ChildCard({ childId, isExpanded, onToggle }: {
   const healthScore = attTotal > 0 ? computeHealthScore(attRate, avgGrade, pendingFees) : 0;
   const meta = healthMeta(healthScore);
 
-  const recentScores = (overview?.recentGrades || []).map((g: any) => g.score);
+  const recentScores = (overview?.recentGrades || []).map((g: any) => g.percentage ?? g.score);
   const gradeColor = avgGrade !== null ? (avgGrade >= 70 ? '#22c55e' : avgGrade >= 50 ? '#eab308' : '#ef4444') : '#6366f1';
 
   if (isLoading || !child) {
@@ -220,8 +220,8 @@ function ChildCard({ childId, isExpanded, onToggle }: {
                       <p className="text-2xs text-gray-400 truncate">{g.exam?.title}</p>
                     </div>
                     <span className={`text-sm font-extrabold tabular-nums
-                      ${g.score >= 70 ? 'text-green-600' : g.score >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
-                      {g.score}%
+                      ${(g.percentage ?? g.score) >= 70 ? 'text-green-600' : (g.percentage ?? g.score) >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                      {Math.round(g.percentage ?? g.score)}%
                     </span>
                   </div>
                 ))}
