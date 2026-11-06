@@ -41,7 +41,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
       }),
       prisma.assignment.count({ where }),
     ]);
-    const scopedAssignments = studentId ? assignments.map(({ submissions, ...assignment }) => ({ ...assignment, mySubmission: submissions[0] ?? null, submitted: Boolean(submissions[0]?.submittedAt) })) : assignments;
+    const scopedAssignments: any[] = studentId ? assignments.map((assignment: any) => ({ ...assignment, mySubmission: assignment.submissions[0] ?? null, submitted: Boolean(assignment.submissions[0]?.submittedAt) })) : assignments;
     return sendPaginated(res, scopedAssignments, total, page, limit);
   } catch (err) { next(err); }
 }
