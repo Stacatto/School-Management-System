@@ -24,6 +24,99 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
   } catch (err) { next(err); }
 }
 
+export async function listAssignments(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const assignments = await prisma.feeAssignment.findMany({
+      include: {
+        fee: true,
+        student: { include: { user: { select: { name: true, email: true } }, class: true } },
+      },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+    });
+    return sendSuccess(res, assignments);
+  } catch (err) { next(err); }
+}
+
+export async function listMyAssignments(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
+    if (!student) return sendSuccess(res, []);
+    const assignments = await prisma.feeAssignment.findMany({
+      where: { studentId: student.id },
+      include: { fee: true, payments: { where: { status: 'PAID' }, select: { amount: true, createdAt: true, method: true } } },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+    });
+    return sendSuccess(res, assignments);
+  } catch (err) { next(err); }
+}
+
+export async function assignFee(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const { feeId, studentIds } = req.body;
+    if (typeof feeId !== 'string' || !feeId || !Array.isArray(studentIds) || studentIds.length === 0 || studentIds.some((id: unknown) => typeof id !== 'string' || !id)) {
+      return sendError(res, 'Choose a fee and at least one student', 400);
+    }
+
+    const uniqueStudentIds = [...new Set<string>(studentIds)];
+    const [fee, students] = await Promise.all([
+      prisma.fee.findUnique({ where: { id: feeId } }),
+      prisma.student.findMany({ where: { id: { in: uniqueStudentIds } }, select: { id: true } }),
+    ]);
+    if (!fee) return sendError(res, 'Fee structure not found', 404);
+    if (students.length !== uniqueStudentIds.length) return sendError(res, 'One or more students could not be found', 400);
+
+    const assignments = await prisma.$transaction(uniqueStudentIds.map(studentId =>
+      prisma.feeAssignment.upsert({
+        where: { feeId_studentId: { feeId, studentId } },
+        update: {},
+        create: { feeId, studentId, amount: fee.amount, dueDate: fee.dueDate },
+      })
+    ));
+    return sendSuccess(res, assignments, `Fee assigned to ${assignments.length} student${assignments.length === 1 ? '' : 's'}`, 201);
+  } catch (err) { next(err); }
+}
+
+export async function removeAssignment(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const assignment = await prisma.feeAssignment.findUnique({ where: { id: req.params.id }, select: { id: true, amountPaid: true } });
+    if (!assignment) return sendError(res, 'Fee assignment not found', 404);
+    if (assignment.amountPaid > 0) return sendError(res, 'A fee with payments recorded cannot be removed', 409);
+    await prisma.feeAssignment.delete({ where: { id: assignment.id } });
+    return sendSuccess(res, null, 'Fee assignment removed');
+  } catch (err) { next(err); }
+}
+
+export async function recordAssignmentPayment(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const amount = Number(req.body.amount);
+    const method = req.body.method;
+    if (!Number.isFinite(amount) || amount <= 0) return sendError(res, 'Enter a payment amount greater than zero', 400);
+    if (!['CASH', 'BANK_TRANSFER', 'MOBILE_MONEY'].includes(method)) return sendError(res, 'Choose a supported payment method', 400);
+
+    const result = await prisma.$transaction(async tx => {
+      const assignment = await tx.feeAssignment.findUnique({ where: { id: req.params.id }, include: { fee: true, student: { select: { id: true, userId: true } } } });
+      if (!assignment) return { error: 'not-found' as const };
+      const updated = await tx.feeAssignment.updateMany({
+        where: { id: assignment.id, amountPaid: { lte: assignment.amount - amount } },
+        data: { amountPaid: { increment: amount } },
+      });
+      if (updated.count !== 1) return { error: 'overpayment' as const };
+
+      const payment = await tx.feePayment.create({
+        data: { studentId: assignment.studentId, feeId: assignment.feeId, feeAssignmentId: assignment.id, amount, method, status: 'PAID' },
+        include: { student: { include: { user: { select: { name: true } } } }, fee: true },
+      });
+      return { payment, assignment: { ...assignment, amountPaid: assignment.amountPaid + amount } };
+    });
+
+    if ('error' in result) {
+      if (result.error === 'not-found') return sendError(res, 'Fee assignment not found', 404);
+      return sendError(res, 'Payment exceeds the remaining balance', 409);
+    }
+    return sendSuccess(res, result, 'Payment recorded');
+  } catch (err) { next(err); }
+}
+
 export async function create(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { name, amount, dueDate, description, academicYear } = req.body;
@@ -201,6 +294,10 @@ export async function verifyFlutterwave(req: AuthRequest, res: Response, next: N
 
 export async function getStatement(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    if (req.user!.role !== 'ADMIN') {
+      const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
+      if (!student || student.id !== req.params.studentId) return sendError(res, 'Not authorized to view this statement', 403);
+    }
     const payments = await prisma.feePayment.findMany({
       where: { studentId: req.params.studentId },
       include: { fee: true },

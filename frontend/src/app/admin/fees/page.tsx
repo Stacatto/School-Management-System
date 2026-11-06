@@ -57,6 +57,10 @@ export default function FeesPage() {
   const [activeTab, setActiveTab] = useState<'kanban' | 'list'>('kanban');
   const [feeEditor, setFeeEditor] = useState<any>(null);
   const [feeForm, setFeeForm] = useState({ name: '', amount: '', dueDate: '', description: '', academicYear: '2026-2027' });
+  const [assignmentEditor, setAssignmentEditor] = useState(false);
+  const [assignmentForm, setAssignmentForm] = useState({ feeId: '', studentIds: [] as string[] });
+  const [paymentEditor, setPaymentEditor] = useState<any>(null);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'CASH' });
 
   const { data: fees } = useQuery({
     queryKey: ['fees'],
@@ -64,9 +68,20 @@ export default function FeesPage() {
   });
 
   const { data: payments = [] } = useQuery({
-    queryKey: ['fee-payments'],
-    queryFn: () => feesAPI.payments().then(r => r.data.data),
+    queryKey: ['fee-payments', user?.role],
+    queryFn: () => (canManage ? feesAPI.payments() : feesAPI.myPayments()).then(r => r.data.data),
   });
+
+  const { data: feeAssignments = [] } = useQuery({
+    queryKey: [canManage ? 'fee-assignments' : 'my-fee-assignments'],
+    queryFn: () => (canManage ? feesAPI.assignments() : feesAPI.myAssignments()).then(r => r.data.data),
+  });
+  const { data: studentResponse } = useQuery({
+    queryKey: ['students-all'],
+    queryFn: () => api.get('/students', { params: { limit: 500 } }).then(r => r.data),
+    enabled: canManage && assignmentEditor,
+  });
+  const students = studentResponse?.data || [];
 
   const saveFee = useMutation({
     mutationFn: () => {
@@ -74,6 +89,18 @@ export default function FeesPage() {
       return feeEditor?.id ? api.put(`/fees/${feeEditor.id}`, body) : api.post('/fees', body);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['fees'] }); setFeeEditor(null); },
+  });
+  const assignFee = useMutation({
+    mutationFn: () => feesAPI.assign(assignmentForm),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fee-assignments'] }); setAssignmentEditor(false); setAssignmentForm({ feeId: '', studentIds: [] }); },
+  });
+  const recordAssignmentPayment = useMutation({
+    mutationFn: () => feesAPI.recordAssignmentPayment(paymentEditor.id, { amount: Number(paymentForm.amount), method: paymentForm.method }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fee-assignments'] }); qc.invalidateQueries({ queryKey: ['fee-payments'] }); setPaymentEditor(null); },
+  });
+  const removeFeeAssignment = useMutation({
+    mutationFn: feesAPI.removeAssignment,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fee-assignments'] }),
   });
   const openFeeEditor = (fee?: any) => {
     setFeeEditor(fee || {});
@@ -234,6 +261,21 @@ export default function FeesPage() {
 
         {/* Fee Structures */}
         <div className="card">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div><h3 className="font-semibold text-gray-900">{canManage ? 'Fees Assigned to Students' : 'My Assigned Fees'}</h3><p className="text-xs text-gray-500 mt-1">Track each student’s balance separately from fee structure setup.</p></div>
+            {canManage && <button className="btn-primary text-sm" disabled={!fees?.length} onClick={() => { assignFee.reset(); setAssignmentForm({ feeId: '', studentIds: [] }); setAssignmentEditor(true); }}>Assign Fee</button>}
+          </div>
+          {canManage ? (
+            <div className="overflow-x-auto"><table className="table"><thead><tr><th>Student</th><th>Fee</th><th>Assigned</th><th>Paid</th><th>Balance</th><th>Due</th><th>Actions</th></tr></thead><tbody>
+              {feeAssignments.map((assignment: any) => <tr key={assignment.id}><td><p className="font-medium text-sm">{assignment.student?.user?.name}</p><p className="text-xs text-gray-400">{assignment.student?.admissionNo}</p></td><td>{assignment.fee?.name}</td><td>{formatCurrency(assignment.amount)}</td><td>{formatCurrency(assignment.amountPaid)}</td><td className="font-semibold">{formatCurrency(Math.max(0, assignment.amount - assignment.amountPaid))}</td><td>{assignment.dueDate ? formatDate(assignment.dueDate) : '—'}</td><td><div className="flex gap-2">{assignment.amount - assignment.amountPaid > 0 && <button className="text-xs text-primary-700 hover:underline" onClick={() => { setPaymentEditor(assignment); setPaymentForm({ amount: String(assignment.amount - assignment.amountPaid), method: 'CASH' }); recordAssignmentPayment.reset(); }}>Record payment</button>}{assignment.amountPaid === 0 && <button aria-label={`Remove ${assignment.fee?.name} from ${assignment.student?.user?.name}`} className="text-xs text-red-600 hover:underline" disabled={removeFeeAssignment.isPending} onClick={() => removeFeeAssignment.mutate(assignment.id)}>Remove</button>}</div></td></tr>)}
+              {!feeAssignments.length && <tr><td colSpan={7} className="py-8 text-center text-sm text-gray-400">No fees assigned to students yet.</td></tr>}
+            </tbody></table></div>
+          ) : <div className="space-y-2">{feeAssignments.map((assignment: any) => { const balance = Math.max(0, assignment.amount - assignment.amountPaid); const overdue = balance > 0 && assignment.dueDate && new Date(assignment.dueDate) < new Date(); return <div key={assignment.id} className="flex items-center justify-between gap-4 rounded-xl border p-3"><div><p className="font-medium text-sm">{assignment.fee?.name}</p><p className="text-xs text-gray-500">{assignment.fee?.academicYear}{assignment.dueDate ? ` · Due ${formatDate(assignment.dueDate)}` : ''}</p></div><div className="text-right"><p className="font-semibold">{formatCurrency(balance)} due</p><p className={`text-xs ${overdue ? 'text-red-600' : 'text-gray-500'}`}>{balance === 0 ? 'Paid' : overdue ? 'Overdue' : `Paid ${formatCurrency(assignment.amountPaid)}`}</p></div></div>; })}{!feeAssignments.length && <p className="py-8 text-center text-sm text-gray-400">No fees have been assigned to your account.</p>}</div>}
+          {removeFeeAssignment.isError && <p role="alert" className="mt-2 text-sm text-red-600">Couldn’t remove that assignment. Assignments with recorded payments must be kept for the payment history.</p>}
+        </div>
+
+        {/* Fee Structures */}
+        <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-gray-900">Fee Structures</h3>
             {canManage && <button onClick={() => openFeeEditor()} className="flex items-center gap-1 text-xs text-primary-600 hover:underline">Add fee structure <ArrowRight className="w-3 h-3" /></button>}
@@ -256,6 +298,8 @@ export default function FeesPage() {
           </div>
         </div>
       </div>
+      {assignmentEditor && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6"><h2 className="text-lg font-semibold mb-4">Assign fee to students</h2><div className="space-y-3"><label className="label">Fee structure<select className="select mt-1" value={assignmentForm.feeId} onChange={event => setAssignmentForm(form => ({ ...form, feeId: event.target.value }))}><option value="">Choose a fee…</option>{(fees || []).map((fee: any) => <option key={fee.id} value={fee.id}>{fee.name} · {formatCurrency(fee.amount)} · {fee.academicYear}</option>)}</select></label><label className="label">Students<select multiple size={6} className="select mt-1" value={assignmentForm.studentIds} onChange={event => setAssignmentForm(form => ({ ...form, studentIds: Array.from(event.target.selectedOptions, option => option.value) }))}>{students.map((student: any) => <option key={student.id} value={student.id}>{student.user?.name} · {student.admissionNo}{student.class?.name ? ` · ${student.class.name}` : ''}</option>)}</select><span className="block text-xs text-gray-500 mt-1">Use Ctrl or Command to select more than one student.</span></label>{assignFee.isError && <p role="alert" className="text-sm text-red-600">Couldn’t assign this fee. Check the selection; an existing assignment will be kept and not duplicated.</p>}</div><div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setAssignmentEditor(false)}>Cancel</button><button className="btn-primary flex-1" disabled={!assignmentForm.feeId || !assignmentForm.studentIds.length || assignFee.isPending} onClick={() => assignFee.mutate()}>{assignFee.isPending ? 'Assigning…' : `Assign to ${assignmentForm.studentIds.length || 0} student${assignmentForm.studentIds.length === 1 ? '' : 's'}`}</button></div></div></div>}
+      {paymentEditor && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"><h2 className="text-lg font-semibold">Record fee payment</h2><p className="text-sm text-gray-500 mt-1">{paymentEditor.student?.user?.name} · {paymentEditor.fee?.name}</p><p className="text-xs text-gray-500 mt-1">Remaining balance: {formatCurrency(paymentEditor.amount - paymentEditor.amountPaid)}</p><div className="space-y-3 mt-4"><label className="label">Amount received<input className="input mt-1" type="number" min="0.01" max={paymentEditor.amount - paymentEditor.amountPaid} step="0.01" value={paymentForm.amount} onChange={event => setPaymentForm(form => ({ ...form, amount: event.target.value }))} /></label><label className="label">Method<select className="select mt-1" value={paymentForm.method} onChange={event => setPaymentForm(form => ({ ...form, method: event.target.value }))}><option value="CASH">Cash</option><option value="BANK_TRANSFER">Bank transfer</option><option value="MOBILE_MONEY">Mobile money</option></select></label>{recordAssignmentPayment.isError && <p role="alert" className="text-sm text-red-600">Couldn’t record that payment. The amount must be positive and no greater than the remaining balance.</p>}</div><div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setPaymentEditor(null)}>Cancel</button><button className="btn-primary flex-1" disabled={!Number(paymentForm.amount) || Number(paymentForm.amount) <= 0 || Number(paymentForm.amount) > paymentEditor.amount - paymentEditor.amountPaid || recordAssignmentPayment.isPending} onClick={() => recordAssignmentPayment.mutate()}>{recordAssignmentPayment.isPending ? 'Saving…' : 'Record payment'}</button></div></div></div>}
       {feeEditor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">

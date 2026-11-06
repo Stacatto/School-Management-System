@@ -70,10 +70,12 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(compression());
 
-// HTTP cache headers — GET list/detail endpoints cache for 60s in browser, 2 min on CDN
+// Authenticated school data must not be served from a browser or proxy cache after writes.
 app.use((req, res, next) => {
-  if (req.method === 'GET' && !req.path.startsWith('/api/v1/auth')) {
-    res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+  if (req.path.startsWith('/api/v1/')) {
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  } else if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'no-store');
   } else {
     res.setHeader('Cache-Control', 'no-store');
   }

@@ -12,6 +12,9 @@ router.put('/:id', authorize('ADMIN'), ctrl.updateRoute);
 router.get('/routes', ctrl.listRoutes);
 router.post('/routes', authorize('ADMIN'), ctrl.createRoute);
 router.put('/routes/:id', authorize('ADMIN'), ctrl.updateRoute);
+router.get('/students/unassigned', authorize('ADMIN'), ctrl.listUnassignedStudents);
+router.get('/routes/:id/students', authorize('ADMIN'), ctrl.listRouteStudents);
 router.post('/routes/:id/assign', authorize('ADMIN'), ctrl.assignStudent);
+router.delete('/routes/:id/assign/:studentId', authorize('ADMIN'), ctrl.unassignStudent);
 
 export default router;

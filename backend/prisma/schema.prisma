@@ -59,6 +59,7 @@ model Student {
   borrowings       BookBorrowing[]
   examResults      ExamResult[]
   feePayments      FeePayment[]
+  feeAssignments   FeeAssignment[]
   class            Class?                 @relation(fields: [classId], references: [id])
   transportRoute   TransportRoute?        @relation(fields: [transportRouteId], references: [id])
   user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -227,6 +228,7 @@ model Fee {
   academicYear String
   createdAt    DateTime     @default(now())
   payments     FeePayment[]
+  assignments  FeeAssignment[]
 
   @@map("fees")
 }
@@ -242,11 +244,29 @@ model FeePayment {
   paypalOrderId         String?
   flutterwaveRef        String?
   transactionRef        String?
+  feeAssignmentId       String?
   createdAt             DateTime      @default(now())
   fee                   Fee           @relation(fields: [feeId], references: [id])
   student               Student       @relation(fields: [studentId], references: [id])
+  assignment            FeeAssignment? @relation(fields: [feeAssignmentId], references: [id])
 
   @@map("fee_payments")
+}
+
+model FeeAssignment {
+  id         String       @id @default(uuid())
+  feeId      String
+  studentId  String
+  amount     Float
+  amountPaid Float        @default(0)
+  dueDate    DateTime?
+  createdAt  DateTime     @default(now())
+  fee        Fee          @relation(fields: [feeId], references: [id])
+  student    Student      @relation(fields: [studentId], references: [id])
+  payments   FeePayment[]
+
+  @@unique([feeId, studentId])
+  @@map("fee_assignments")
 }
 
 model Book {
@@ -330,6 +350,7 @@ model Message {
   conversationId String
   senderId       String
   content        String
+  readAt         DateTime?
   createdAt      DateTime     @default(now())
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   sender         User         @relation("SentMessages", fields: [senderId], references: [id])
