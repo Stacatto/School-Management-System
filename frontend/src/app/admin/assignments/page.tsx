@@ -19,6 +19,8 @@ interface Assignment {
   class?: { name: string; _count?: { students: number } };
   createdBy?: { name: string };
   _count?: { submissions: number };
+  submitted?: boolean;
+  mySubmission?: { id: string; content?: string; score?: number; feedback?: string; submittedAt?: string } | null;
 }
 
 interface Submission {
@@ -246,6 +248,7 @@ function AssignmentCard({ a, role, onViewSubmissions, onEdit }: { a: Assignment;
             View submissions <ChevronRight className="w-3 h-3" />
           </button>
         )}
+        {role === 'STUDENT' && <span className={a.submitted ? 'text-green-700 font-medium' : 'text-amber-700 font-medium'}>{a.submitted ? (a.mySubmission?.score != null ? `Graded · ${a.mySubmission.score}/${a.totalPoints ?? 100}` : 'Submitted') : 'Not submitted'}</span>}
       </div>
     </div>
   );
@@ -262,22 +265,25 @@ export default function AssignmentsPage() {
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'overdue'>('all');
   const [form, setForm] = useState(EMPTY_FORM);
+  const [submissionTarget, setSubmissionTarget] = useState<Assignment | null>(null);
+  const [submissionText, setSubmissionText] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['assignments'],
     queryFn: () => api.get('/assignments').then(r => r.data.data),
   });
 
-  const { data: subjects } = useQuery({
-    queryKey: ['subjects'],
-    queryFn: () => api.get('/subjects').then(r => r.data.data).catch(() => []),
-    enabled: role === 'TEACHER' || role === 'ADMIN',
-  });
-
   const { data: classes } = useQuery({
     queryKey: ['classes'],
     queryFn: () => api.get('/classes').then(r => r.data.data).catch(() => []),
     enabled: role === 'TEACHER' || role === 'ADMIN',
+  });
+
+  const selectedClass = (classes || []).find((item: any) => item.id === form.classId);
+  const classSubjects = selectedClass?.subjects || [];
+  const submitWork = useMutation({
+    mutationFn: ({ assignment, content }: { assignment: Assignment; content: string }) => api.post(`/assignments/${assignment.id}/submit`, { content }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['assignments'] }); setSubmissionTarget(null); setSubmissionText(''); },
   });
 
   const save = useMutation({
@@ -382,7 +388,10 @@ export default function AssignmentsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {assignments.map(a => (
-              <AssignmentCard key={a.id} a={a} role={role} onViewSubmissions={() => setSelectedAssignment(a)} onEdit={() => openEditor(a)} />
+              <div key={a.id}>
+                <AssignmentCard a={a} role={role} onViewSubmissions={() => setSelectedAssignment(a)} onEdit={() => openEditor(a)} />
+                {role === 'STUDENT' && <button className="btn-primary w-full mt-2" onClick={() => { setSubmissionTarget(a); setSubmissionText(a.mySubmission?.content || ''); submitWork.reset(); }}>{a.submitted ? 'Edit Submission' : 'Submit Work'}</button>}
+              </div>
             ))}
           </div>
         )}
@@ -393,6 +402,8 @@ export default function AssignmentsPage() {
     {selectedAssignment && (
       <SubmissionsPanel assignment={selectedAssignment} onClose={() => setSelectedAssignment(null)} />
     )}
+
+    {submissionTarget && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6"><h2 className="text-lg font-semibold mb-2">{submissionTarget.submitted ? 'Update submission' : 'Submit assignment'}</h2><p className="text-sm text-gray-500 mb-4">{submissionTarget.title}</p><textarea className="input resize-y" rows={8} maxLength={10000} value={submissionText} onChange={e => setSubmissionText(e.target.value)} placeholder="Write your response here…" />{submitWork.isError && <p role="alert" className="text-sm text-red-600 mt-2">Couldn’t save your submission. Please try again.</p>}<div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setSubmissionTarget(null)}>Cancel</button><button className="btn-primary flex-1" disabled={!submissionText.trim() || submitWork.isPending} onClick={() => submitWork.mutate({ assignment: submissionTarget, content: submissionText.trim() })}>{submitWork.isPending ? 'Saving…' : 'Save Submission'}</button></div></div></div>}
 
     {/* Create / edit modal */}
     {showAdd && (
@@ -411,19 +422,20 @@ export default function AssignmentsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Subject</label>
-                <select className="select" value={form.subjectId} onChange={e => setForm(f => ({ ...f, subjectId: e.target.value }))}>
+                <select className="select" value={form.subjectId} disabled={!form.classId || classSubjects.length === 0} onChange={e => setForm(f => ({ ...f, subjectId: e.target.value }))}>
                   <option value="">Select…</option>
-                  {(subjects || []).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {classSubjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="label">Class</label>
-                <select className="select" value={form.classId} onChange={e => setForm(f => ({ ...f, classId: e.target.value }))}>
+                <select className="select" value={form.classId} onChange={e => setForm(f => ({ ...f, classId: e.target.value, subjectId: '' }))}>
                   <option value="">Select…</option>
                   {(classes || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
+            {form.classId && classSubjects.length === 0 && <p className="text-xs text-amber-700">Add subjects to this class in Classes before creating assignments.</p>}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Due Date</label>

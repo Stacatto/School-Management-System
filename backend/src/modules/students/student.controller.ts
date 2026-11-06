@@ -78,6 +78,7 @@ export async function create(req: AuthRequest, res: Response, next: NextFunction
 
 export async function getOne(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    if (!(await canAccessStudent(req, req.params.id))) return sendError(res, 'Student not found', 404);
     const student = await withCache(`students:${req.params.id}`, 300, () =>
       prisma.student.findUniqueOrThrow({
         where: { id: req.params.id },
@@ -125,6 +126,7 @@ export async function remove(req: AuthRequest, res: Response, next: NextFunction
 
 export async function getGrades(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    if (!(await canAccessStudent(req, req.params.id))) return sendError(res, 'Student not found', 404);
     const grades = await prisma.examResult.findMany({
       where: { studentId: req.params.id },
       include: { exam: { include: { subject: true } } },
@@ -136,6 +138,7 @@ export async function getGrades(req: AuthRequest, res: Response, next: NextFunct
 
 export async function getAttendance(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    if (!(await canAccessStudent(req, req.params.id))) return sendError(res, 'Student not found', 404);
     const records = await prisma.attendance.findMany({
       where: { studentId: req.params.id },
       orderBy: { date: 'desc' },
@@ -147,6 +150,7 @@ export async function getAttendance(req: AuthRequest, res: Response, next: NextF
 
 export async function getFees(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    if (!(await canAccessStudent(req, req.params.id))) return sendError(res, 'Student not found', 404);
     const fees = await prisma.feePayment.findMany({
       where: { studentId: req.params.id },
       include: { fee: true },
@@ -158,6 +162,7 @@ export async function getFees(req: AuthRequest, res: Response, next: NextFunctio
 
 export async function getAssignments(req: AuthRequest, res: Response, next: NextFunction) {
   try {
+    if (!(await canAccessStudent(req, req.params.id))) return sendError(res, 'Student not found', 404);
     const submissions = await prisma.assignmentSubmission.findMany({
       where: { studentId: req.params.id },
       include: { assignment: { include: { subject: true } } },
@@ -165,4 +170,15 @@ export async function getAssignments(req: AuthRequest, res: Response, next: Next
     });
     return sendSuccess(res, submissions);
   } catch (err) { next(err); }
+}
+
+async function canAccessStudent(req: AuthRequest, studentId: string): Promise<boolean> {
+  const student = await prisma.student.findUnique({ where: { id: studentId }, select: { userId: true, parentEmail: true, classId: true } });
+  if (!student) return false;
+  if (req.user!.role === 'ADMIN' || student.userId === req.user!.id) return true;
+  if (req.user!.role === 'PARENT' && req.user!.email && student.parentEmail?.toLowerCase() === req.user!.email.toLowerCase()) return true;
+  if (req.user!.role !== 'TEACHER' || !student.classId) return false;
+  const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
+  if (!teacher) return false;
+  return Boolean(await prisma.class.findFirst({ where: { id: student.classId, OR: [{ teacherId: teacher.id }, { timetable: { some: { teacherId: teacher.id } } }] }, select: { id: true } }));
 }

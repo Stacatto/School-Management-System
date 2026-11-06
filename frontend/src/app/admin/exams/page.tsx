@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { api, examsAPI } from '@/lib/api';
@@ -30,6 +30,8 @@ export default function ExamsPage() {
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [editingExam, setEditingExam] = useState<any | null>(null);
+  const [resultsExam, setResultsExam] = useState<any | null>(null);
+  const [resultValues, setResultValues] = useState<Record<string, { score: string; grade: string; remarks: string }>>({});
   const [form, setForm] = useState(EMPTY_FORM);
   const qc = useQueryClient();
   const { user } = useAuthStore();
@@ -40,16 +42,39 @@ export default function ExamsPage() {
     queryFn: () => examsAPI.list({ page, limit: 20 }).then(r => r.data),
   });
 
-  const { data: subjects = [] } = useQuery({
-    queryKey: ['subjects'],
-    queryFn: () => api.get('/subjects').then(r => r.data.data),
-    enabled: showCreate && canCreate,
-  });
-
   const { data: classes = [] } = useQuery({
     queryKey: ['classes'],
     queryFn: () => api.get('/classes').then(r => r.data.data),
     enabled: showCreate && canCreate,
+  });
+
+  const resultsQuery = useQuery({
+    queryKey: ['exam-results-entry', resultsExam?.id],
+    queryFn: async () => {
+      const [studentsResponse, resultsResponse] = await Promise.all([
+        api.get(`/classes/${resultsExam.classId}/students`),
+        api.get(`/exams/${resultsExam.id}/results`),
+      ]);
+      return { students: studentsResponse.data.data, results: resultsResponse.data.data };
+    },
+    enabled: !!resultsExam,
+  });
+
+  useEffect(() => {
+    if (!resultsExam || !resultsQuery.data) return;
+    const existing = new Map(resultsQuery.data.results.map((result: any) => [result.studentId, result]));
+    setResultValues(Object.fromEntries(resultsQuery.data.students.map((student: any) => {
+      const result: any = existing.get(student.id);
+      return [student.id, { score: result ? String(result.score) : '', grade: result?.grade || '', remarks: result?.remarks || '' }];
+    })));
+  }, [resultsExam, resultsQuery.data]);
+
+  const saveResults = useMutation({
+    mutationFn: () => api.post(`/exams/${resultsExam.id}/results`, {
+      results: Object.entries(resultValues).filter(([, value]) => value.score !== '').map(([studentId, value]) => ({ studentId, score: Number(value.score), grade: value.grade || null, remarks: value.remarks || null })),
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['exam-results-entry', resultsExam?.id] }); qc.invalidateQueries({ queryKey: ['exams'] }); setResultsExam(null); toast.success('Exam results saved'); },
+    onError: (error: any) => toast.error(error?.response?.data?.message || 'Could not save exam results.'),
   });
 
   const saveExam = useMutation({
@@ -111,6 +136,8 @@ export default function ExamsPage() {
                           {isPast ? 'Completed' : 'Upcoming'}
                         </span>
                         {canCreate && (
+                          <div className="flex items-center gap-2">
+                          <button type="button" className="btn-secondary !px-2.5 !py-1.5 text-xs" onClick={() => { setResultsExam(exam); setResultValues({}); saveResults.reset(); }}>Enter Results</button>
                           <button
                             type="button"
                             className="btn-secondary !px-2.5 !py-1.5 text-xs flex items-center gap-1"
@@ -133,6 +160,7 @@ export default function ExamsPage() {
                           >
                             <Pencil className="w-3.5 h-3.5" /> Edit
                           </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -169,19 +197,20 @@ export default function ExamsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Subject</label>
-                  <select className="select" value={form.subjectId} onChange={e => setForm(v => ({ ...v, subjectId: e.target.value }))}>
+                  <select className="select" disabled={!form.classId || !(classes.find((item: any) => item.id === form.classId)?.subjects || []).length} value={form.subjectId} onChange={e => setForm(v => ({ ...v, subjectId: e.target.value }))}>
                     <option value="">Select…</option>
-                    {(subjects || []).map((subject: any) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+                    {(classes.find((item: any) => item.id === form.classId)?.subjects || []).map((subject: any) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="label">Class</label>
-                  <select className="select" value={form.classId} onChange={e => setForm(v => ({ ...v, classId: e.target.value }))}>
+                  <select className="select" value={form.classId} onChange={e => setForm(v => ({ ...v, classId: e.target.value, subjectId: '' }))}>
                     <option value="">Select…</option>
                     {(classes || []).map((cls: any) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
                   </select>
                 </div>
               </div>
+              {form.classId && !(classes.find((item: any) => item.id === form.classId)?.subjects || []).length && <p className="text-xs text-amber-700">Add subjects to this class in Classes before scheduling exams.</p>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Exam Date and Time</label>
@@ -213,6 +242,30 @@ export default function ExamsPage() {
                 {saveExam.isPending ? 'Saving…' : editingExam ? 'Save Changes' : 'Create Exam'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {resultsExam && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-lg font-semibold text-gray-900">Enter results · {resultsExam.title}</h2>
+            <p className="text-sm text-gray-500 mt-1 mb-4">Enter each student’s score, grade, and optional remarks. Scores are out of {resultsExam.totalMarks}.</p>
+            {resultsQuery.isLoading ? <div className="py-10 text-center text-gray-500">Loading class roster…</div> : resultsQuery.isError ? <p role="alert" className="text-sm text-red-600">Couldn’t load the class roster or existing results.</p> : (
+              <div className="space-y-3">
+                {(resultsQuery.data?.students || []).map((student: any) => {
+                  const previous = resultsQuery.data?.results?.find((result: any) => result.studentId === student.id);
+                  const value = resultValues[student.id] || { score: previous ? String(previous.score) : '', grade: previous?.grade || '', remarks: previous?.remarks || '' };
+                  return <div key={student.id} className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_1fr] gap-2 items-center border rounded-xl p-3">
+                    <div><p className="text-sm font-medium">{student.user?.name || 'Student'}</p><p className="text-xs text-gray-500">{student.admissionNo}</p></div>
+                    <input aria-label={`${student.user?.name} score`} className="input" type="number" min="0" max={resultsExam.totalMarks} placeholder={`/${resultsExam.totalMarks}`} value={value.score} onChange={e => setResultValues(v => ({ ...v, [student.id]: { ...value, score: e.target.value } }))} />
+                    <input aria-label={`${student.user?.name} grade`} className="input" placeholder="Grade" value={value.grade} onChange={e => setResultValues(v => ({ ...v, [student.id]: { ...value, grade: e.target.value } }))} />
+                    <input aria-label={`${student.user?.name} remarks`} className="input" placeholder="Remarks" value={value.remarks} onChange={e => setResultValues(v => ({ ...v, [student.id]: { ...value, remarks: e.target.value } }))} />
+                  </div>;
+                })}
+                {!resultsQuery.data?.students?.length && <p className="py-6 text-center text-gray-500">No students are enrolled in this class yet.</p>}
+              </div>
+            )}
+            <div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setResultsExam(null)}>Cancel</button><button className="btn-primary flex-1" disabled={resultsQuery.isLoading || !Object.values(resultValues).some(value => value.score !== '') || saveResults.isPending} onClick={() => saveResults.mutate()}>{saveResults.isPending ? 'Saving…' : 'Save Results'}</button></div>
           </div>
         </div>
       )}

@@ -186,7 +186,7 @@ export default function StudentDashboard() {
 
   const { data: fees = [] } = useQuery({
     queryKey: ['my-fees'],
-    queryFn: () => api.get('/fees/my').then(r => r.data.data).catch(() => []),
+    queryFn: () => api.get('/fees/my-assignments').then(r => r.data.data).catch(() => []),
   });
 
   // Attendance counts
@@ -200,25 +200,26 @@ export default function StudentDashboard() {
   (grades as any[]).forEach((g: any) => {
     const subj = g.exam?.subject?.name || 'Unknown';
     if (!gradesBySubject[subj]) gradesBySubject[subj] = { name: subj, scores: [], latest: 0 };
-    gradesBySubject[subj].scores.push(g.score);
-    gradesBySubject[subj].latest = g.score;
+    const percentage = Number(g.percentage ?? (g.exam?.totalMarks ? (g.score / g.exam.totalMarks) * 100 : 0));
+    gradesBySubject[subj].scores.push(percentage);
+    gradesBySubject[subj].latest = percentage;
   });
   const subjectList = Object.values(gradesBySubject).slice(0, 6);
 
   // CGPA calculation (average of all scores / 10 mapped to 10-point scale)
-  const allScores = (grades as any[]).map((g: any) => g.score);
+  const allScores = (grades as any[]).map((g: any) => Number(g.percentage ?? (g.exam?.totalMarks ? (g.score / g.exam.totalMarks) * 100 : 0)));
   const avgScore = allScores.length ? allScores.reduce((a: number, b: number) => a + b, 0) / allScores.length : null;
   const cgpa = avgScore !== null ? ((avgScore / 100) * 10).toFixed(2) : null;
 
   // Assignments
-  const pending = (assignments as any[]).filter((a: any) => new Date(a.dueDate) > today);
+  const pending = (assignments as any[]).filter((a: any) => new Date(a.dueDate) > today && !a.submitted);
   const overdue = (assignments as any[]).filter((a: any) => new Date(a.dueDate) <= today && !a.submitted);
 
   // Fee status
   const feeArr = fees as any[];
-  const totalFee = feeArr.reduce((s: number, f: any) => s + (f.fee?.amount ?? 0), 0);
-  const paidFee  = feeArr.filter((f: any) => f.status === 'PAID').reduce((s: number, f: any) => s + (f.fee?.amount ?? f.amount ?? 0), 0);
-  const feePending = feeArr.some((f: any) => f.status === 'PENDING');
+  const totalFee = feeArr.reduce((s: number, f: any) => s + Number(f.amount ?? 0), 0);
+  const paidFee = feeArr.reduce((s: number, f: any) => s + Number(f.amountPaid ?? 0), 0);
+  const feePending = totalFee > paidFee;
 
   // Today's schedule
   const todaySlots = (timetable as any[])
@@ -476,7 +477,7 @@ export default function StudentDashboard() {
             <div className="card">
               <div className="section-header">
                 <h3 className="section-title">Upcoming Assignments</h3>
-                <a href="/student/assignments" className="section-action">
+                <a href="/admin/assignments" className="section-action">
                   View all <ChevronRight className="w-3 h-3" />
                 </a>
               </div>
@@ -546,7 +547,7 @@ export default function StudentDashboard() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-400 tabular-nums">{g.score}/{g.exam?.totalMarks ?? 100}</span>
-                          <ScorePill score={Math.round((g.score / (g.exam?.totalMarks ?? 100)) * 100)} />
+                          <ScorePill score={Math.round(Number(g.percentage ?? (g.exam?.totalMarks ? (g.score / g.exam.totalMarks) * 100 : 0)))} />
                         </div>
                       </div>
                     );

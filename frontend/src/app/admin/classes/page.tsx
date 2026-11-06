@@ -13,8 +13,8 @@ interface Class {
   grade: string;
   section?: string;
   teacher?: { id: string; user?: { name: string } };
-  _count?: { students: number; timetables: number };
-  subjects?: { name: string }[];
+  _count?: { students: number; timetable: number };
+  subjects?: { id: string; name: string }[];
 }
 
 function ClassCard({ cls, canEdit, onEdit }: { cls: Class; canEdit: boolean; onEdit: (cls: Class) => void }) {
@@ -50,7 +50,7 @@ function ClassCard({ cls, canEdit, onEdit }: { cls: Class; canEdit: boolean; onE
             </div>
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
               <BookOpen className="w-3.5 h-3.5 text-gray-400" />
-              {cls._count?.timetables ?? 0} periods/wk
+              {cls._count?.timetable ?? 0} periods/wk
             </div>
             {cls.teacher && (
               <div className="flex items-center gap-1.5 text-sm text-gray-600 ml-auto">
@@ -69,7 +69,7 @@ function ClassCard({ cls, canEdit, onEdit }: { cls: Class; canEdit: boolean; onE
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Subjects</p>
                   <div className="flex flex-wrap gap-1.5">
                     {cls.subjects.map(s => (
-                      <span key={s.name} className="badge badge-blue">{s.name}</span>
+                      <span key={s.id} className="badge badge-blue">{s.name}</span>
                     ))}
                   </div>
                 </div>
@@ -89,7 +89,7 @@ export default function ClassesPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [editingClass, setEditingClass] = useState<Class | null>(null);
   const [search, setSearch] = useState('');
-  const [form, setForm] = useState({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` });
+  const [form, setForm] = useState({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`, subjectIds: [] as string[] });
 
   const { data, isLoading } = useQuery({
     queryKey: ['classes'],
@@ -102,12 +102,18 @@ export default function ClassesPage() {
     enabled: showAdd && canManage,
   });
 
+  const { data: subjectsData = [] } = useQuery({
+    queryKey: ['subjects'],
+    queryFn: () => api.get('/subjects').then(r => r.data.data),
+    enabled: showAdd && canManage,
+  });
+
   const create = useMutation({
     mutationFn: (body: typeof form) => api.post('/classes', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['classes'] });
       setShowAdd(false);
-      setForm({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` });
+      setForm({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`, subjectIds: [] });
     },
   });
 
@@ -118,7 +124,7 @@ export default function ClassesPage() {
 
   const openEdit = (cls: Class) => {
     setEditingClass(cls);
-    setForm({ name: cls.name, grade: cls.grade, section: cls.section || '', teacherId: cls.teacher?.id || '', academicYear: (cls as any).academicYear || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` });
+    setForm({ name: cls.name, grade: cls.grade, section: cls.section || '', teacherId: cls.teacher?.id || '', academicYear: (cls as any).academicYear || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`, subjectIds: (cls.subjects || []).map(subject => subject.id) });
     setShowAdd(true);
   };
 
@@ -138,7 +144,7 @@ export default function ClassesPage() {
       subtitle={`${(data || []).length} classes across all grades`}
       allowedRoles={['ADMIN', 'TEACHER']}
       actions={
-        canManage ? <button className="btn-primary" onClick={() => { setEditingClass(null); setShowAdd(true); }}>
+        canManage ? <button className="btn-primary" onClick={() => { setEditingClass(null); setForm({ name: '', grade: '', section: '', teacherId: '', academicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`, subjectIds: [] }); create.reset(); update.reset(); setShowAdd(true); }}>
           <Plus className="w-4 h-4" /> New Class
         </button> : undefined
       }
@@ -219,6 +225,16 @@ export default function ClassesPage() {
                   ))}
                 </select>
               </div>
+              <fieldset>
+                <legend className="label mb-2">Subjects taught to this class</legend>
+                {subjectsData.length ? <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto rounded-xl border border-gray-200 p-3">
+                  {subjectsData.map((subject: any) => <label key={subject.id} className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={form.subjectIds.includes(subject.id)} onChange={event => setForm(f => ({ ...f, subjectIds: event.target.checked ? [...f.subjectIds, subject.id] : f.subjectIds.filter(id => id !== subject.id) }))} />
+                    <span>{subject.name}</span>
+                  </label>)}
+                </div> : <p className="text-xs text-gray-500">Add subjects in Academics → Subjects first.</p>}
+                <p className="text-xs text-gray-500 mt-1">These subjects will be available when scheduling periods, assignments, and exams for the class.</p>
+              </fieldset>
               <div>
                 <label className="label">Academic Year</label>
                 <input className="input" placeholder="2025-2026" value={form.academicYear} onChange={e => setForm(f => ({ ...f, academicYear: e.target.value }))} />

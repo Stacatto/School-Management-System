@@ -13,7 +13,7 @@ router.get('/:id', ctrl.getOne);
 router.put('/:id', authorize('ADMIN', 'TEACHER'), ctrl.update);
 router.delete('/:id', authorize('ADMIN'), ctrl.remove);
 router.post('/:id/results', authorize('ADMIN', 'TEACHER'), ctrl.addResults);
-router.get('/:id/results', ctrl.getResults);
-router.get('/:id/report-card', ctrl.generateReportCard);
+router.get('/:id/results', authorize('ADMIN', 'TEACHER'), ctrl.getResults);
+router.get('/:id/report-card', authorize('ADMIN', 'TEACHER'), ctrl.generateReportCard);
 
 export default router;
