@@ -4,6 +4,20 @@ import { signToken } from '../../utils/jwt';
 
 jest.mock('../../config/database', () => {
   const mockPrisma = {
+    class: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+    },
+    teacher: {
+      findUnique: jest.fn(),
+    },
+    student: {
+      count: jest.fn(),
+      findMany: jest.fn(),
+    },
+    user: {
+      findMany: jest.fn(),
+    },
     attendance: {
       findMany: jest.fn(),
       groupBy: jest.fn(),
@@ -29,6 +43,12 @@ describe('POST /api/v1/attendance (bulk mark)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockResolvedValue([{ id: 'a1' }, { id: 'a2' }]);
+    mockPrisma.teacher.findUnique.mockResolvedValue({ id: 'teacher-1' });
+    mockPrisma.class.findUnique.mockResolvedValue({ id: 'class-1', teacherId: 'teacher-1', timetable: [] });
+    mockPrisma.class.findMany.mockResolvedValue([{ id: 'class-1' }]);
+    mockPrisma.student.count.mockResolvedValue(2);
+    mockPrisma.student.findMany.mockResolvedValue([]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
   });
 
   it('allows TEACHER to mark attendance', async () => {
