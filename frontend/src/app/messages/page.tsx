@@ -36,13 +36,13 @@ export default function MessagesPage() {
     onSuccess: response => { setSelectedConv(response.data.data.id); setNewConversationOpen(false); setRecipientId(''); queryClient.invalidateQueries({ queryKey: ['conversations'] }); },
   });
 
-  const { data: conversations = [] } = useQuery({
+  const { data: conversations = [], isError: conversationsError } = useQuery({
     queryKey: ['conversations'],
     queryFn: () => api.get('/messages/conversations').then(r => r.data.data),
     refetchInterval: 10000,
   });
 
-  const { data: messages = [] } = useQuery({
+  const { data: messages = [], isError: messagesError } = useQuery({
     queryKey: ['messages', selectedConv],
     queryFn: () => api.get(`/messages/conversations/${selectedConv}/messages`).then(r => r.data.data),
     enabled: !!selectedConv,
@@ -112,7 +112,9 @@ export default function MessagesPage() {
 
           {/* Conversation list */}
           <div className="flex-1 overflow-y-auto">
-            {filteredConvs.length === 0 ? (
+            {conversationsError ? (
+              <div role="alert" className="px-4 py-6 text-sm text-red-600">Conversations couldn’t be loaded. Please refresh or try again shortly.</div>
+            ) : filteredConvs.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 text-center px-4">
                 <MessageSquare className="w-8 h-8 text-gray-200 mb-2" />
                 <p className="text-sm text-gray-400">{search ? 'No matches' : 'No conversations yet'}</p>
@@ -223,7 +225,7 @@ export default function MessagesPage() {
                                   {new Date(msg.createdAt).toLocaleTimeString('en', { timeStyle: 'short' })}
                                 </span>
                                 {isMine && (
-                                  msg.read
+                                  msg.readAt
                                     ? <CheckCheck className="w-3 h-3 text-primary-400" />
                                     : <Check className="w-3 h-3 text-gray-400" />
                                 )}
@@ -241,6 +243,8 @@ export default function MessagesPage() {
 
               {/* Input */}
               <div className="px-4 py-3 border-t bg-white">
+                {sendMutation.isError && <p role="alert" className="mb-2 text-sm text-red-600">Message couldn’t be sent. Your text is still here; check your connection and try again.</p>}
+                {messagesError && <p role="alert" className="mb-2 text-sm text-red-600">Messages couldn’t be loaded. Please refresh or try again shortly.</p>}
                 <div className="flex items-end gap-2 bg-gray-100 rounded-2xl px-4 py-2">
                   <textarea
                     ref={inputRef}

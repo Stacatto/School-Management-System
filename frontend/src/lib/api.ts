@@ -81,7 +81,13 @@ export const examsAPI = {
 
 export const feesAPI = {
   list: () => api.get('/fees'),
+  assignments: () => api.get('/fees/assignments'),
+  myAssignments: () => api.get('/fees/my-assignments'),
+  assign: (data: any) => api.post('/fees/assignments', data),
+  removeAssignment: (id: string) => api.delete(`/fees/assignments/${id}`),
+  recordAssignmentPayment: (id: string, data: any) => api.post(`/fees/assignments/${id}/payments`, data),
   payments: () => api.get('/fees/payments'),
+  myPayments: () => api.get('/fees/my'),
   recordPayment: (data: any) => api.post('/fees/payments', data),
   statement: (studentId: string) => api.get(`/fees/payments/${studentId}/statement`),
 };

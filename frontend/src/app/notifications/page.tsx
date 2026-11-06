@@ -7,13 +7,35 @@ import { Bell, CheckCheck, BellRing, BellOff } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { usePushSubscription } from '@/hooks/usePushSubscription';
 import toast from 'react-hot-toast';
+import { useState } from 'react';
+import { useAuthStore } from '@/store/authStore';
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastForm, setBroadcastForm] = useState({ title: '', message: '', roles: [] as string[], live: true });
 
   const { data: notifications, isLoading } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => notificationsAPI.list().then(r => r.data.data),
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
+  });
+
+  const broadcastMutation = useMutation({
+    mutationFn: () => notificationsAPI.broadcast({
+      title: broadcastForm.title,
+      message: broadcastForm.message,
+      roles: broadcastForm.roles,
+      channels: broadcastForm.live ? ['socket'] : [],
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      setBroadcastForm({ title: '', message: '', roles: [], live: true });
+      setBroadcastOpen(false);
+      toast.success('Notification sent');
+    },
   });
 
   const markAllMutation = useMutation({
@@ -35,6 +57,44 @@ export default function NotificationsPage() {
   return (
     <DashboardLayout title="Notifications">
       <div className="max-w-2xl mx-auto space-y-4">
+        {user?.role === 'ADMIN' && (
+          <div className="card">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium text-sm text-gray-900">School notification</p>
+                <p className="text-xs text-gray-500">Send an in-app notice to selected groups.</p>
+              </div>
+              <button className="btn-primary text-sm" onClick={() => setBroadcastOpen(open => !open)}>
+                {broadcastOpen ? 'Close' : 'Compose'}
+              </button>
+            </div>
+            {broadcastOpen && (
+              <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); broadcastMutation.mutate(); }}>
+                <label className="label">Title<input className="input mt-1" maxLength={120} value={broadcastForm.title} onChange={event => setBroadcastForm(form => ({ ...form, title: event.target.value }))} /></label>
+                <label className="label">Message<textarea className="input mt-1" rows={3} maxLength={2000} value={broadcastForm.message} onChange={event => setBroadcastForm(form => ({ ...form, message: event.target.value }))} /></label>
+                <fieldset>
+                  <legend className="label mb-2">Send to</legend>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {['TEACHER', 'STUDENT', 'PARENT', 'ADMIN'].map(role => (
+                      <label key={role} className="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" checked={broadcastForm.roles.includes(role)} onChange={event => setBroadcastForm(form => ({ ...form, roles: event.target.checked ? [...form.roles, role] : form.roles.filter(item => item !== role) }))} />
+                        {role.charAt(0) + role.slice(1).toLowerCase()}s
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={broadcastForm.live} onChange={event => setBroadcastForm(form => ({ ...form, live: event.target.checked }))} />
+                  Deliver instantly to users who are online
+                </label>
+                {broadcastMutation.isError && <p role="alert" className="text-sm text-red-600">Couldn’t send the notification. Check the details and try again.</p>}
+                <button className="btn-primary" type="submit" disabled={!broadcastForm.title.trim() || !broadcastForm.message.trim() || !broadcastForm.roles.length || broadcastMutation.isPending}>
+                  {broadcastMutation.isPending ? 'Sending…' : 'Send notification'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
         {/* Push notification opt-in */}
         {push.isSupported && (
           <div className="card flex items-center justify-between gap-4">

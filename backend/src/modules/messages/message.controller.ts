@@ -14,7 +14,13 @@ export async function listConversations(req: AuthRequest, res: Response, next: N
       },
       orderBy: { updatedAt: 'desc' },
     });
-    return sendSuccess(res, conversations);
+    const withUnreadCounts = await Promise.all(conversations.map(async conversation => ({
+      ...conversation,
+      unreadCount: await prisma.message.count({
+        where: { conversationId: conversation.id, senderId: { not: req.user!.id }, readAt: null },
+      }),
+    })));
+    return sendSuccess(res, withUnreadCounts);
   } catch (err) { next(err); }
 }
 
@@ -45,6 +51,10 @@ export async function getMessages(req: AuthRequest, res: Response, next: NextFun
   try {
     const participant = await prisma.conversationParticipant.findFirst({ where: { conversationId: req.params.id, userId: req.user!.id } });
     if (!participant) return sendError(res, 'Conversation not found', 404);
+    await prisma.message.updateMany({
+      where: { conversationId: req.params.id, senderId: { not: req.user!.id }, readAt: null },
+      data: { readAt: new Date() },
+    });
     const messages = await prisma.message.findMany({
       where: { conversationId: req.params.id },
       include: { sender: { select: { name: true, avatar: true } } },
@@ -90,15 +100,30 @@ export async function send(req: AuthRequest, res: Response, next: NextFunction) 
 
     const participants = await prisma.conversationParticipant.findMany({ where: { conversationId: convId }, select: { userId: true } });
     if (!participants.some(p => p.userId === req.user!.id)) return sendError(res, 'Conversation not found', 404);
-    const message = await prisma.message.create({
-      data: { conversationId: convId, senderId: req.user!.id, content: content.trim() },
-      include: { sender: { select: { name: true, avatar: true } } },
+    const message = await prisma.$transaction(async tx => {
+      const saved = await tx.message.create({
+        data: { conversationId: convId, senderId: req.user!.id, content: content.trim() },
+        include: { sender: { select: { name: true, avatar: true } } },
+      });
+      await tx.conversation.update({ where: { id: convId }, data: { updatedAt: new Date() } });
+      const recipients = participants.filter(p => p.userId !== req.user!.id);
+      if (recipients.length) {
+        await tx.notification.createMany({
+          data: recipients.map(p => ({
+            userId: p.userId,
+            title: `New message from ${saved.sender.name}`,
+            message: saved.content.slice(0, 240),
+          })),
+        });
+      }
+      return saved;
     });
 
-    await prisma.conversation.update({ where: { id: convId }, data: { updatedAt: new Date() } });
-
-    // Real-time delivery
-    participants.filter(p => p.userId !== req.user!.id).forEach(p => getIO().to(`user:${p.userId}`).emit('message:new', message));
+    // The message and its in-app notification are already persisted; realtime delivery is best-effort.
+    try {
+      const io = getIO();
+      participants.filter(p => p.userId !== req.user!.id).forEach(p => io.to(`user:${p.userId}`).emit('message:new', message));
+    } catch { /* Keep a successful database save successful if Socket.IO is unavailable. */ }
 
     return sendSuccess(res, message, 'Sent', 201);
   } catch (err) { next(err); }
