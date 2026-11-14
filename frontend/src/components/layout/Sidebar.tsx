@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, GraduationCap, BookOpen, CalendarDays,
   ClipboardList, DollarSign, Library, Bus, Bell, MessageSquare,
-  BarChart3, Settings, LogOut, ChevronLeft, Megaphone,
+  BarChart3, Settings, LogOut, ChevronLeft, Megaphone, Award,
   BookMarked, UserCheck, Layers, ChevronRight,
 } from 'lucide-react';
 
@@ -51,6 +51,7 @@ const navGroups: NavGroup[] = [
       { label: 'Timetable',   href: '/admin/timetable',   icon: CalendarDays,    roles: ['ADMIN', 'TEACHER', 'STUDENT'] },
       { label: 'Attendance',  href: '/admin/attendance',  icon: UserCheck,       roles: ['ADMIN', 'TEACHER'] },
       { label: 'Exams',       href: '/admin/exams',       icon: ClipboardList,   roles: ['ADMIN', 'TEACHER', 'STUDENT'] },
+      { label: 'My Results',  href: '/student/grades',    icon: Award,           roles: ['STUDENT'] },
       { label: 'Assignments', href: '/admin/assignments', icon: BookMarked,      roles: ['ADMIN', 'TEACHER', 'STUDENT'] },
     ],
   },

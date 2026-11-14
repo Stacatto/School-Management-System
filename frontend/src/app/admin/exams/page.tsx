@@ -37,6 +37,12 @@ export default function ExamsPage() {
   const { user } = useAuthStore();
   const canCreate = user?.role === 'ADMIN' || user?.role === 'TEACHER';
 
+  const { data: myResults = [] } = useQuery({
+    queryKey: ['my-grades', user?.id],
+    queryFn: () => api.get('/exams/my-results').then(response => response.data.data),
+    enabled: user?.role === 'STUDENT',
+  });
+
   const { data, isLoading } = useQuery({
     queryKey: ['exams', page],
     queryFn: () => examsAPI.list({ page, limit: 20 }).then(r => r.data),
@@ -125,6 +131,7 @@ export default function ExamsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {exams.map((exam: any) => {
                 const isPast = new Date(exam.examDate) < new Date();
+                const myResult = user?.role === 'STUDENT' ? myResults.find((result: any) => result.examId === exam.id) : null;
                 return (
                   <div key={exam.id} className="card hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between mb-3">
@@ -170,6 +177,16 @@ export default function ExamsPage() {
                       <span>{formatDate(exam.examDate)}</span>
                       <span>{exam.duration} min • {exam.totalMarks} marks</span>
                     </div>
+                    {user?.role === 'STUDENT' && (
+                      <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2.5 text-sm">
+                        {myResult ? (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-gray-500">My result</span>
+                            <span className="font-semibold text-gray-900">{myResult.score} / {exam.totalMarks} <span className="ml-1 text-violet-700">({Number(myResult.percentage ?? (exam.totalMarks ? myResult.score / exam.totalMarks * 100 : 0)).toFixed(1)}%)</span>{myResult.grade ? ` · ${myResult.grade}` : ''}</span>
+                          </div>
+                        ) : <p className="text-xs text-gray-500">Result not posted yet</p>}
+                      </div>
+                    )}
                   </div>
                 );
               })}
