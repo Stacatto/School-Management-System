@@ -175,8 +175,9 @@ export default function StudentDashboard() {
   });
 
   const { data: grades = [] } = useQuery({
-    queryKey: ['my-grades'],
+    queryKey: ['my-grades', user?.id],
     queryFn: () => api.get('/exams/my-results').then(r => r.data.data),
+    enabled: !!user?.id,
   });
 
   const { data: timetable = [] } = useQuery({
