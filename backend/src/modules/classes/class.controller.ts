@@ -147,14 +147,20 @@ export async function getStudents(req: AuthRequest, res: Response, next: NextFun
       const teaches = teacher && (cls.teacherId === teacher.id || Boolean(await prisma.timetableSlot.findFirst({ where: { classId: cls.id, teacherId: teacher.id }, select: { id: true } })));
       if (!teaches) return sendError(res, 'Class not found', 404);
     } else if (req.user!.role !== 'ADMIN') return sendError(res, 'Class not found', 404);
-    const students = await withCache(`classes:${req.params.id}:students`, 180, () =>
+    const students = await withCache(`classes:${req.params.id}:students:${req.user!.id}`, 180, () =>
       prisma.student.findMany({
         where: { classId: req.params.id },
         include: { user: { select: { name: true, email: true, avatar: true } } },
         orderBy: { createdAt: 'asc' },
       })
     );
-    return sendSuccess(res, students);
+    const roster = req.user!.role === 'ADMIN'
+      ? students
+      : students.map(student => ({
+          id: student.id,
+          user: { name: student.user.name, avatar: student.user.avatar },
+        }));
+    return sendSuccess(res, roster);
   } catch (err) { next(err); }
 }
 
