@@ -15,6 +15,15 @@ The workflow reads the live database and creates a compressed `pg_dump`. It rest
 
 GitHub keeps each encrypted artifact for 30 days. Treat workflow access as sensitive because repository collaborators who can run or change workflows may affect backup handling. This rolling artifact is a short-term, off-provider recovery copy, not a long-term archive. Before a school pilot with real records, choose an approved off-site retention destination and retention period with the school.
 
+## Live readiness check
+
+The backend exposes two unauthenticated, read-only health endpoints:
+
+- `/health` confirms the Node process responds. It does not verify the database.
+- `/ready` runs a small database query and returns HTTP 200 only when the database is reachable; otherwise it returns HTTP 503 without exposing connection details.
+
+To have Render route traffic only to a database-ready backend, open **schoolms-backend-prototype → Settings → Health Checks**, choose **Edit**, set the path to `/ready`, and save. Render uses HTTP health checks to decide whether an instance is ready for traffic and can restart an unhealthy running instance; verify the service becomes healthy after saving. See [Render health checks](https://render.com/docs/health-checks).
+
 ## Recover from a recent data mistake with Neon
 
 Neon's Free plan currently advertises a six-hour Instant Restore window, subject to its current plan limits and the project's actual settings. Verify the window in the Neon console before relying on it. See [Neon's current Free plan information](https://neon.com/blog/neon-free-plan-1-gb-per-project).

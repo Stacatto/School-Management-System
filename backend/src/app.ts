@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
+import prisma from './config/database';
 
 import { initSentry, setupSentryErrorHandler } from './utils/sentry';
 import { gdprHeaders, auditConsent } from './middleware/gdpr';
@@ -65,7 +66,14 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Render probes these read-only endpoints continuously; do not rate-limit health checks.
+  skip: (req) => req.path === '/health' || req.path === '/ready',
+}));
 
 // Body parsing & compression
 app.use(express.json({
@@ -97,6 +105,14 @@ app.use(auditMutations);
 
 // Health & metrics
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/ready', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return res.status(200).json({ status: 'ready', checks: { database: 'ok' } });
+  } catch {
+    return res.status(503).json({ status: 'not_ready', checks: { database: 'unavailable' } });
+  }
+});
 app.get('/metrics', metricsHandler);
 
 // API routes
