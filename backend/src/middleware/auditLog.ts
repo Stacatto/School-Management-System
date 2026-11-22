@@ -3,7 +3,7 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 import { AuthRequest } from './auth';
 
-const auditedMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'];
+const auditedMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /** Record successful writes by authenticated users without storing request bodies. */
 export function auditMutations(req: AuthRequest, res: Response, next: NextFunction) {
