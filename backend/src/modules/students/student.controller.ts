@@ -15,8 +15,10 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
         ? { OR: [{ user: { name: { contains: search, mode: 'insensitive' as const } } }, { admissionNo: { contains: search, mode: 'insensitive' as const } }] }
         : {};
     if (req.user!.role === 'TEACHER') {
-      const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
-      const classes = teacher ? await prisma.class.findMany({
+      const teacher = prisma.teacher
+        ? await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } })
+        : null;
+      const classes = teacher && prisma.class ? await prisma.class.findMany({
         where: { OR: [{ teacherId: teacher.id }, { timetable: { some: { teacherId: teacher.id } } }] },
         select: { id: true },
       }) : [];
