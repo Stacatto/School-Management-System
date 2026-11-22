@@ -219,28 +219,32 @@ export async function stripeWebhook(req: AuthRequest, res: Response, next: NextF
 
 // ─── Student and parent online fee payments ────────────────────────────────
 
-async function getPayableAssignment(req: AuthRequest, studentId: string, feeId: string, amount: number) {
-  if (!Number.isFinite(amount) || amount <= 0) return { error: 'Enter a payment amount greater than zero' as const, status: 400 };
-  if (req.user!.role !== 'STUDENT' && req.user!.role !== 'PARENT') return { error: 'Only the student or linked parent can pay this fee' as const, status: 403 };
+type PayableAssignmentResult =
+  | { ok: false; error: string; status: number }
+  | { ok: true; assignment: { id: string; amount: number; amountPaid: number } };
+
+async function getPayableAssignment(req: AuthRequest, studentId: string, feeId: string, amount: number): Promise<PayableAssignmentResult> {
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Enter a payment amount greater than zero', status: 400 };
+  if (req.user!.role !== 'STUDENT' && req.user!.role !== 'PARENT') return { ok: false, error: 'Only the student or linked parent can pay this fee', status: 403 };
 
   const student = req.user!.role === 'STUDENT'
     ? await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } })
     : req.user!.email
       ? await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } })
       : null;
-  if (!student || student.id !== studentId) return { error: 'You cannot pay fees for this student' as const, status: 403 };
+  if (!student || student.id !== studentId) return { ok: false, error: 'You cannot pay fees for this student', status: 403 };
 
   const assignment = await prisma.feeAssignment.findUnique({
     where: { feeId_studentId: { feeId, studentId } },
     select: { id: true, amount: true, amountPaid: true },
   });
-  if (!assignment) return { error: 'No matching fee is assigned to this student' as const, status: 404 };
+  if (!assignment) return { ok: false, error: 'No matching fee is assigned to this student', status: 404 };
 
   const remaining = Math.max(0, assignment.amount - assignment.amountPaid);
   if (Math.round(amount * 100) > Math.round(remaining * 100)) {
-    return { error: 'Payment exceeds the remaining fee balance' as const, status: 409 };
+    return { ok: false, error: 'Payment exceeds the remaining fee balance', status: 409 };
   }
-  return { assignment, student };
+  return { ok: true, assignment };
 }
 
 async function canPayForStudent(req: AuthRequest, studentId: string) {
@@ -295,7 +299,7 @@ export async function createPayPalOrder(req: AuthRequest, res: Response, next: N
       return sendError(res, 'Choose a student and assigned fee', 400);
     }
     const payable = await getPayableAssignment(req, studentId, feeId, amount);
-    if ('error' in payable) return sendError(res, payable.error, payable.status);
+    if (!payable.ok) return sendError(res, payable.error, payable.status);
 
     const order = await ppCreate(amount, 'USD', { studentId, feeId, feeAssignmentId: payable.assignment.id });
     await prisma.feePayment.create({
