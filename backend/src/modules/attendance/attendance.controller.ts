@@ -76,7 +76,7 @@ export async function markBulk(req: AuthRequest, res: Response, next: NextFuncti
         const student = affected.find(item => item.id === record.studentId);
         if (!student) return;
         const recipients = [student.userId, student.parentEmail ? parentByEmail.get(student.parentEmail.toLowerCase()) : undefined].filter((id): id is string => Boolean(id));
-        await notifyUsers(recipients, 'Attendance updated', `Attendance was marked ${record.status.toLowerCase()} on ${attendanceDate.toLocaleDateString()}.`);
+        await notifyUsers(recipients, 'Attendance updated', `Attendance was marked ${record.status.toLowerCase()} on ${attendanceDate.toLocaleDateString()}.`, 'attendance');
       }));
     }
     return sendSuccess(res, created, 'Attendance marked');
