@@ -5,6 +5,7 @@ import { authorize } from '../../middleware/rbac';
 
 const router = Router();
 // Stripe authenticates this endpoint with its signed webhook payload.
+router.post('/payments/stripe-webhook', ctrl.stripeWebhook);
 router.use(authenticate);
 
 router.get('/', ctrl.list);
@@ -18,7 +19,6 @@ router.post('/', authorize('ADMIN'), ctrl.create);
 router.put('/:id', authorize('ADMIN'), ctrl.update);
 router.get('/payments', authorize('ADMIN'), ctrl.listPayments);
 router.post('/payments', authorize('ADMIN'), ctrl.recordPayment);
-router.post('/payments/stripe-webhook', ctrl.stripeWebhook);
 router.post('/payments/paypal/create', authorize('STUDENT', 'PARENT'), ctrl.createPayPalOrder);
 router.post('/payments/paypal/capture', authorize('STUDENT', 'PARENT'), ctrl.capturePayPalOrder);
 router.post('/payments/flutterwave/init', authorize('STUDENT', 'PARENT'), ctrl.initFlutterwave);
