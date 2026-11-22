@@ -225,7 +225,9 @@ async function getPayableAssignment(req: AuthRequest, studentId: string, feeId: 
 
   const student = req.user!.role === 'STUDENT'
     ? await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } })
-    : await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } });
+    : req.user!.email
+      ? await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } })
+      : null;
   if (!student || student.id !== studentId) return { error: 'You cannot pay fees for this student' as const, status: 403 };
 
   const assignment = await prisma.feeAssignment.findUnique({
@@ -246,7 +248,7 @@ async function canPayForStudent(req: AuthRequest, studentId: string) {
     const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
     return student?.id === studentId;
   }
-  if (req.user!.role === 'PARENT') {
+  if (req.user!.role === 'PARENT' && req.user!.email) {
     const student = await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } });
     return Boolean(student);
   }
