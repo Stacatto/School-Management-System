@@ -104,6 +104,8 @@ export const notificationsAPI = {
   broadcast: (data: any) => api.post('/notifications/broadcast', data),
   markRead: (id: string) => api.put(`/notifications/${id}/read`),
   markAllRead: () => api.put('/notifications/read-all'),
+  preferences: () => api.get('/notifications/preferences'),
+  updatePreferences: (preferences: Record<string, boolean>) => api.put('/notifications/preferences', { preferences }),
 };
 
 export const dashboardAPI = {
