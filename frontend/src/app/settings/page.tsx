@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { api, notificationsAPI } from '@/lib/api';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { User, Lock, Bell, Palette, Shield, ChevronRight, Check } from 'lucide-react';
 
 type Section = 'profile' | 'security' | 'notifications' | 'appearance';
@@ -33,6 +33,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
   const [section, setSection] = useState<Section>('profile');
   const [saved, setSaved] = useState(false);
   const [profile, setProfile] = useState({ name: user?.name || '', email: user?.email || '', phone: '' });
@@ -43,7 +44,7 @@ export default function SettingsPage() {
   const [mfaQr, setMfaQr] = useState('');
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const { data: currentUser } = useQuery({ queryKey: ['auth-me'], queryFn: () => api.get('/auth/me').then(r => r.data.data) });
-  const { data: savedNotifPrefs, isLoading: notifPrefsLoading } = useQuery({
+  const { data: savedNotifPrefs, isLoading: notifPrefsLoading, isError: notifPrefsError, refetch: refetchNotifPrefs } = useQuery({
     queryKey: ['notification-preferences', user?.id],
     queryFn: () => notificationsAPI.preferences().then(r => r.data.data),
     enabled: !!user?.id,
@@ -73,7 +74,12 @@ export default function SettingsPage() {
 
   const saveNotificationPrefs = useMutation({
     mutationFn: () => notificationsAPI.updatePreferences(notifPrefs).then(r => r.data.data),
-    onSuccess: preferences => { setNotifPrefs(preferences); setSaved(true); setTimeout(() => setSaved(false), 2000); },
+    onSuccess: preferences => {
+      queryClient.setQueryData(['notification-preferences', user?.id], preferences);
+      setNotifPrefs(preferences);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    },
   });
 
   const changePassword = useMutation({
@@ -223,8 +229,9 @@ export default function SettingsPage() {
 
               <div className="pt-2 border-t border-gray-100">
                 {notifPrefsLoading && <p className="text-xs text-gray-500 mb-2">Loading your saved preferences…</p>}
+                {notifPrefsError && <div role="alert" className="mb-2 text-sm text-red-600">Couldn’t load your saved preferences. <button className="underline" onClick={() => refetchNotifPrefs()}>Try again</button></div>}
                 {saveNotificationPrefs.isError && <p role="alert" className="text-sm text-red-600 mb-2">Couldn’t save notification preferences. Please try again.</p>}
-                <button className="btn-primary" disabled={notifPrefsLoading || saveNotificationPrefs.isPending} onClick={() => saveNotificationPrefs.mutate()}>
+                <button className="btn-primary" disabled={notifPrefsLoading || notifPrefsError || saveNotificationPrefs.isPending} onClick={() => saveNotificationPrefs.mutate()}>
                   {saveNotificationPrefs.isPending ? 'Saving…' : saved ? <><Check className="w-4 h-4" /> Saved</> : 'Save Preferences'}
                 </button>
               </div>
