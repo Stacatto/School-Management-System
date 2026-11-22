@@ -204,7 +204,7 @@ export async function stripeWebhook(req: AuthRequest, res: Response, next: NextF
 
     if (event.type === 'payment_intent.succeeded') {
       const intent = event.data.object as Stripe.PaymentIntent;
-      const payment = await prisma.feePayment.findUnique({
+      const payment = await prisma.feePayment.findFirst({
         where: { stripePaymentIntentId: intent.id },
         select: { id: true, amount: true },
       });
@@ -312,7 +312,7 @@ export async function capturePayPalOrder(req: AuthRequest, res: Response, next: 
   try {
     const { orderId } = req.body;
     if (typeof orderId !== 'string' || !orderId) return sendError(res, 'Payment order is required', 400);
-    const payment = await prisma.feePayment.findUnique({
+    const payment = await prisma.feePayment.findFirst({
       where: { paypalOrderId: orderId },
       select: { id: true, studentId: true, amount: true, status: true },
     });
@@ -377,7 +377,7 @@ export async function verifyFlutterwave(req: AuthRequest, res: Response, next: N
     if (result.status !== 'successful') return sendError(res, 'Payment not successful', 402);
 
     const payment = typeof result.tx_ref === 'string'
-      ? await prisma.feePayment.findUnique({
+      ? await prisma.feePayment.findFirst({
           where: { flutterwaveRef: result.tx_ref },
           select: { id: true, studentId: true, amount: true, status: true },
         })
