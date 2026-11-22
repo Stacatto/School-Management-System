@@ -14,10 +14,13 @@ export function auditMutations(req: AuthRequest, res: Response, next: NextFuncti
     const actor = req.user;
     if (!actor || res.statusCode < 200 || res.statusCode >= 300) return;
 
+    const auditLog = prisma.auditLog;
+    if (!auditLog || typeof auditLog.create !== 'function') return;
+
     const resource = req.path.slice(0, 190);
     const resourceIdMatch = req.path.match(/\/([a-f0-9-]{20,})\/?$/i);
 
-    void prisma.auditLog.create({
+    void auditLog.create({
       data: {
         userId: actor.id,
         action: `${actor.role}:${isPaymentVerification ? 'VERIFY_PAYMENT' : req.method}`,
