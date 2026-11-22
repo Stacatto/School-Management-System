@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
-import { api } from '@/lib/api';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { api, notificationsAPI } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { User, Lock, Bell, Palette, Shield, ChevronRight, Check } from 'lucide-react';
 
 type Section = 'profile' | 'security' | 'notifications' | 'appearance';
@@ -12,7 +12,7 @@ type Section = 'profile' | 'security' | 'notifications' | 'appearance';
 const SECTIONS: { id: Section; label: string; icon: React.ElementType; desc: string }[] = [
   { id: 'profile', label: 'Profile', icon: User, desc: 'Your name, email, and personal details' },
   { id: 'security', label: 'Security', icon: Lock, desc: 'Password and two-factor authentication' },
-  { id: 'notifications', label: 'Notifications', icon: Bell, desc: 'Email, push, and in-app alerts' },
+  { id: 'notifications', label: 'Notifications', icon: Bell, desc: 'Choose which in-app updates you receive' },
   { id: 'appearance', label: 'Appearance', icon: Palette, desc: 'Theme and display preferences' },
 ];
 
@@ -33,27 +33,35 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export default function SettingsPage() {
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
   const [section, setSection] = useState<Section>('profile');
   const [saved, setSaved] = useState(false);
   const [profile, setProfile] = useState({ name: user?.name || '', email: user?.email || '', phone: '' });
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' });
-  const [notifPrefs, setNotifPrefs] = useState({ email: true, push: true, assignments: true, grades: true, attendance: true, announcements: true });
+  const [notifPrefs, setNotifPrefs] = useState({ assignments: true, attendance: true, fees: true, grades: true, messages: true, announcements: true });
   const [theme, setTheme] = useState('light');
   const [mfaCode, setMfaCode] = useState('');
   const [mfaQr, setMfaQr] = useState('');
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const { data: currentUser } = useQuery({ queryKey: ['auth-me'], queryFn: () => api.get('/auth/me').then(r => r.data.data) });
+  const { data: savedNotifPrefs, isLoading: notifPrefsLoading, isError: notifPrefsError, refetch: refetchNotifPrefs } = useQuery({
+    queryKey: ['notification-preferences', user?.id],
+    queryFn: () => notificationsAPI.preferences().then(r => r.data.data),
+    enabled: !!user?.id,
+  });
 
   useEffect(() => {
     if (currentUser) {
       setProfile({ name: currentUser.name || '', email: currentUser.email || '', phone: currentUser.phone || '' });
       setMfaEnabled(Boolean(currentUser.mfaEnabled));
     }
-    const prefs = localStorage.getItem('sms-notification-preferences');
     const savedTheme = localStorage.getItem('sms-theme');
-    if (prefs) { try { setNotifPrefs(p => ({ ...p, ...JSON.parse(prefs) })); } catch { /* ignore malformed local preferences */ } }
     if (savedTheme === 'light') setTheme(savedTheme);
   }, [currentUser]);
+
+  useEffect(() => {
+    if (savedNotifPrefs) setNotifPrefs(savedNotifPrefs);
+  }, [savedNotifPrefs]);
 
   const saveProfile = useMutation({
     mutationFn: () => api.patch('/auth/profile', profile),
@@ -64,13 +72,23 @@ export default function SettingsPage() {
   const verifyMfa = useMutation({ mutationFn: () => api.post('/auth/mfa/verify', { code: mfaCode }), onSuccess: () => { setMfaEnabled(true); setMfaQr(''); setMfaCode(''); } });
   const disableMfa = useMutation({ mutationFn: () => api.post('/auth/mfa/disable'), onSuccess: () => setMfaEnabled(false) });
 
+  const saveNotificationPrefs = useMutation({
+    mutationFn: () => notificationsAPI.updatePreferences(notifPrefs).then(r => r.data.data),
+    onSuccess: preferences => {
+      queryClient.setQueryData(['notification-preferences', user?.id], preferences);
+      setNotifPrefs(preferences);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    },
+  });
+
   const changePassword = useMutation({
     mutationFn: () => api.post('/auth/change-password', { currentPassword: passwords.current, newPassword: passwords.next }),
     onSuccess: () => { setPasswords({ current: '', next: '', confirm: '' }); setSaved(true); setTimeout(() => setSaved(false), 2000); },
   });
 
   return (
-    <DashboardLayout title="Settings" subtitle="Manage your account preferences" allowedRoles={['ADMIN', 'TEACHER', 'STUDENT']}>
+    <DashboardLayout title="Settings" subtitle="Manage your account preferences" allowedRoles={['ADMIN', 'TEACHER', 'STUDENT', 'PARENT']}>
       <div className="flex gap-6 max-w-4xl">
         {/* Sidebar nav */}
         <div className="w-56 flex-shrink-0 space-y-1">
@@ -184,16 +202,16 @@ export default function SettingsPage() {
             <div className="card space-y-5">
               <div>
                 <h2 className="text-base font-semibold text-gray-900">Notifications</h2>
-                <p className="text-sm text-gray-500 mt-0.5">Choose what you&apos;re notified about</p>
+                <p className="text-sm text-gray-500 mt-0.5">Choose which in-app updates you receive</p>
               </div>
 
               <div className="space-y-4">
                 {[
-                  { key: 'email', label: 'Email notifications', desc: 'Receive updates via email' },
-                  { key: 'push', label: 'Push notifications', desc: 'Browser and mobile push alerts' },
                   { key: 'assignments', label: 'Assignment reminders', desc: 'Alerts for upcoming due dates' },
-                  { key: 'grades', label: 'Grade updates', desc: 'When new grades are posted' },
                   { key: 'attendance', label: 'Attendance alerts', desc: 'Mark absent or late notifications' },
+                  { key: 'fees', label: 'Fee updates', desc: 'When a fee is assigned to you' },
+                  { key: 'grades', label: 'Grade updates', desc: 'When new exam grades are posted' },
+                  { key: 'messages', label: 'Message alerts', desc: 'When you receive a direct message' },
                   { key: 'announcements', label: 'Announcements', desc: 'School-wide and class announcements' },
                 ].map(item => (
                   <div key={item.key} className="flex items-center justify-between py-2">
@@ -210,8 +228,11 @@ export default function SettingsPage() {
               </div>
 
               <div className="pt-2 border-t border-gray-100">
-                <button className="btn-primary" onClick={() => { localStorage.setItem('sms-notification-preferences', JSON.stringify(notifPrefs)); setSaved(true); setTimeout(() => setSaved(false), 2000); }}>
-                  {saved ? <><Check className="w-4 h-4" /> Saved</> : 'Save Preferences'}
+                {notifPrefsLoading && <p className="text-xs text-gray-500 mb-2">Loading your saved preferences…</p>}
+                {notifPrefsError && <div role="alert" className="mb-2 text-sm text-red-600">Couldn’t load your saved preferences. <button className="underline" onClick={() => refetchNotifPrefs()}>Try again</button></div>}
+                {saveNotificationPrefs.isError && <p role="alert" className="text-sm text-red-600 mb-2">Couldn’t save notification preferences. Please try again.</p>}
+                <button className="btn-primary" disabled={notifPrefsLoading || notifPrefsError || saveNotificationPrefs.isPending} onClick={() => saveNotificationPrefs.mutate()}>
+                  {saveNotificationPrefs.isPending ? 'Saving…' : saved ? <><Check className="w-4 h-4" /> Saved</> : 'Save Preferences'}
                 </button>
               </div>
             </div>

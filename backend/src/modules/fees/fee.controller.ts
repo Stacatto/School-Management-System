@@ -75,7 +75,7 @@ export async function assignFee(req: AuthRequest, res: Response, next: NextFunct
     ));
     const parentEmails = [...new Set(students.map(student => student.parentEmail).filter((email): email is string => Boolean(email)))];
     const parents = await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true } });
-    await notifyUsers([...students.map(student => student.userId), ...parents.map(parent => parent.id)], 'Fee assigned', `${fee.name} has been assigned to your account.`);
+    await notifyUsers([...students.map(student => student.userId), ...parents.map(parent => parent.id)], 'Fee assigned', `${fee.name} has been assigned to your account.`, 'fees');
     return sendSuccess(res, assignments, `Fee assigned to ${assignments.length} student${assignments.length === 1 ? '' : 's'}`, 201);
   } catch (err) { next(err); }
 }

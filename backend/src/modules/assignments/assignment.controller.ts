@@ -60,7 +60,7 @@ export async function create(req: AuthRequest, res: Response, next: NextFunction
     });
     const students = await prisma.student.findMany({ where: { classId: assignment.classId }, select: { userId: true, parentEmail: true } });
     const parents = await prisma.user.findMany({ where: { email: { in: students.map(student => student.parentEmail).filter((email): email is string => Boolean(email)) }, role: 'PARENT' }, select: { id: true } });
-    await notifyUsers([...students.map(student => student.userId), ...parents.map(parent => parent.id)], 'New assignment', `${assignment.title} has been posted for ${assignment.class.name}.`);
+    await notifyUsers([...students.map(student => student.userId), ...parents.map(parent => parent.id)], 'New assignment', `${assignment.title} has been posted for ${assignment.class.name}.`, 'assignments');
     return sendSuccess(res, assignment, 'Assignment created', 201);
   } catch (err) { next(err); }
 }

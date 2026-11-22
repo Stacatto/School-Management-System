@@ -16,8 +16,8 @@ export default function NotificationsPage() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [broadcastForm, setBroadcastForm] = useState({ title: '', message: '', roles: [] as string[], live: true });
 
-  const { data: notifications, isLoading } = useQuery({
-    queryKey: ['notifications'],
+  const { data: notifications, isLoading, isError, refetch } = useQuery({
+    queryKey: ['notifications', user?.id],
     queryFn: () => notificationsAPI.list().then(r => r.data.data),
     refetchInterval: 15000,
     refetchOnWindowFocus: true,
@@ -140,6 +140,11 @@ export default function NotificationsPage() {
         {isLoading ? (
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : isError ? (
+          <div className="card text-center py-10">
+            <p role="alert" className="text-sm text-red-600">Notifications couldn’t be loaded.</p>
+            <button className="btn-secondary mt-3" onClick={() => refetch()}>Try again</button>
           </div>
         ) : (notifications || []).length === 0 ? (
           <div className="card text-center py-16">

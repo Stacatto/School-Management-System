@@ -40,8 +40,9 @@ function Breadcrumbs({ title }: { title: string }) {
 
 function NotificationPanel({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
   const { data: notifications = [] } = useQuery({
-    queryKey: ['notifications'],
+    queryKey: ['notifications', user?.id],
     queryFn: () => notificationsAPI.list().then(r => r.data.data),
   });
 
@@ -165,7 +166,7 @@ export function Header({ title }: HeaderProps) {
   const userRef = useRef<HTMLDivElement>(null);
 
   const { data: notifications = [] } = useQuery({
-    queryKey: ['notifications'],
+    queryKey: ['notifications', user?.id],
     queryFn: () => notificationsAPI.list().then(r => r.data.data),
     refetchInterval: 30000,
   });
