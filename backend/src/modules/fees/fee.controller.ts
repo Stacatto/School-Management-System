@@ -204,25 +204,109 @@ export async function stripeWebhook(req: AuthRequest, res: Response, next: NextF
 
     if (event.type === 'payment_intent.succeeded') {
       const intent = event.data.object as Stripe.PaymentIntent;
-      await prisma.feePayment.updateMany({
+      const payment = await prisma.feePayment.findFirst({
         where: { stripePaymentIntentId: intent.id },
-        data: { status: 'PAID' },
+        select: { id: true, amount: true },
       });
+      if (payment && intent.currency === 'usd' && intent.amount_received === Math.round(payment.amount * 100)) {
+        await settleOnlineFeePayment(payment.id);
+      }
     }
 
     return res.json({ received: true });
   } catch (err) { next(err); }
 }
 
-// ─── PayPal ──────────────────────────────────────────────────────────────────
+// ─── Student and parent online fee payments ────────────────────────────────
+
+type PayableAssignmentResult =
+  | { ok: false; error: string; status: number }
+  | { ok: true; assignment: { id: string; amount: number; amountPaid: number } };
+
+async function getPayableAssignment(req: AuthRequest, studentId: string, feeId: string, amount: number): Promise<PayableAssignmentResult> {
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Enter a payment amount greater than zero', status: 400 };
+  if (req.user!.role !== 'STUDENT' && req.user!.role !== 'PARENT') return { ok: false, error: 'Only the student or linked parent can pay this fee', status: 403 };
+
+  const student = req.user!.role === 'STUDENT'
+    ? await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } })
+    : req.user!.email
+      ? await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } })
+      : null;
+  if (!student || student.id !== studentId) return { ok: false, error: 'You cannot pay fees for this student', status: 403 };
+
+  const assignment = await prisma.feeAssignment.findUnique({
+    where: { feeId_studentId: { feeId, studentId } },
+    select: { id: true, amount: true, amountPaid: true },
+  });
+  if (!assignment) return { ok: false, error: 'No matching fee is assigned to this student', status: 404 };
+
+  const remaining = Math.max(0, assignment.amount - assignment.amountPaid);
+  if (Math.round(amount * 100) > Math.round(remaining * 100)) {
+    return { ok: false, error: 'Payment exceeds the remaining fee balance', status: 409 };
+  }
+  return { ok: true, assignment };
+}
+
+async function canPayForStudent(req: AuthRequest, studentId: string) {
+  if (req.user!.role === 'STUDENT') {
+    const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
+    return student?.id === studentId;
+  }
+  if (req.user!.role === 'PARENT' && req.user!.email) {
+    const student = await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } });
+    return Boolean(student);
+  }
+  return false;
+}
+
+async function settleOnlineFeePayment(paymentId: string) {
+  return prisma.$transaction(async tx => {
+    const payment = await tx.feePayment.findUnique({
+      where: { id: paymentId },
+      select: { id: true, amount: true, status: true, feeAssignmentId: true },
+    });
+    if (!payment || payment.status === 'PAID') return false;
+
+    const claimed = await tx.feePayment.updateMany({
+      where: { id: payment.id, status: 'PENDING' },
+      data: { status: 'PAID' },
+    });
+    if (claimed.count !== 1) return false;
+
+    if (payment.feeAssignmentId) {
+      const assignment = await tx.feeAssignment.findUnique({
+        where: { id: payment.feeAssignmentId },
+        select: { amount: true, amountPaid: true },
+      });
+      if (!assignment || Math.round((assignment.amountPaid + payment.amount) * 100) > Math.round(assignment.amount * 100)) {
+        throw new Error('Verified payment exceeds the assigned fee balance');
+      }
+      const updated = await tx.feeAssignment.updateMany({
+        where: { id: payment.feeAssignmentId, amountPaid: assignment.amountPaid },
+        data: { amountPaid: { increment: payment.amount } },
+      });
+      if (updated.count !== 1) throw new Error('Fee balance changed during payment reconciliation');
+    }
+    return true;
+  });
+}
 
 export async function createPayPalOrder(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const { studentId, feeId, amount } = req.body;
-    const order = await ppCreate(amount, 'USD', { studentId, feeId });
+    const { studentId, feeId } = req.body;
+    const amount = Number(req.body.amount);
+    if (typeof studentId !== 'string' || !studentId || typeof feeId !== 'string' || !feeId) {
+      return sendError(res, 'Choose a student and assigned fee', 400);
+    }
+    const payable = await getPayableAssignment(req, studentId, feeId, amount);
+    if (!payable.ok) return sendError(res, payable.error, payable.status);
 
+    const order = await ppCreate(amount, 'USD', { studentId, feeId, feeAssignmentId: payable.assignment.id });
     await prisma.feePayment.create({
-      data: { studentId, feeId, amount, method: 'PAYPAL', paypalOrderId: order.id, status: 'PENDING' },
+      data: {
+        studentId, feeId, amount, method: 'PAYPAL', paypalOrderId: order.id,
+        feeAssignmentId: payable.assignment.id, status: 'PENDING',
+      },
     });
 
     const approvalUrl = order.links.find((l: any) => l.rel === 'approve')?.href;
@@ -233,45 +317,58 @@ export async function createPayPalOrder(req: AuthRequest, res: Response, next: N
 export async function capturePayPalOrder(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const { orderId } = req.body;
+    if (typeof orderId !== 'string' || !orderId) return sendError(res, 'Payment order is required', 400);
+    const payment = await prisma.feePayment.findFirst({
+      where: { paypalOrderId: orderId },
+      select: { id: true, studentId: true, amount: true, status: true },
+    });
+    if (!payment) return sendError(res, 'Payment order not found', 404);
+    if (!(await canPayForStudent(req, payment.studentId))) return sendError(res, 'You cannot capture this payment', 403);
+    if (payment.status === 'PAID') return sendSuccess(res, { status: 'PAID' }, 'Payment already recorded');
+
     const result = await ppCapture(orderId);
+    const capture = result.purchase_units?.[0]?.payments?.captures?.[0];
+    if (
+      result.status !== 'COMPLETED' ||
+      capture?.status !== 'COMPLETED' ||
+      capture?.amount?.currency_code !== 'USD' ||
+      Math.round(Number(capture?.amount?.value) * 100) !== Math.round(payment.amount * 100)
+    ) return sendError(res, 'Payment amount could not be verified', 402);
 
-    if (result.status === 'COMPLETED') {
-      await prisma.feePayment.updateMany({ where: { paypalOrderId: orderId }, data: { status: 'PAID' } });
-      return sendSuccess(res, { status: 'PAID' }, 'Payment captured');
-    }
-
-    return sendError(res, 'Payment not completed', 402);
+    await settleOnlineFeePayment(payment.id);
+    return sendSuccess(res, { status: 'PAID' }, 'Payment captured');
   } catch (err) { next(err); }
 }
-
-export async function paypalWebhook(req: AuthRequest, res: Response, next: NextFunction) {
-  try {
-    const { event_type, resource } = req.body;
-    if (event_type === 'CHECKOUT.ORDER.APPROVED') {
-      await prisma.feePayment.updateMany({
-        where: { paypalOrderId: resource.id },
-        data: { status: 'PAID' },
-      });
-    }
-    return res.json({ received: true });
-  } catch (err) { next(err); }
-}
-
-// ─── Flutterwave ─────────────────────────────────────────────────────────────
 
 export async function initFlutterwave(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const { studentId, feeId, amount, currency = 'NGN', email, name, phone } = req.body;
-    const txRef = `SMS-${uuidv4()}`;
+    const { studentId, feeId } = req.body;
+    const amount = Number(req.body.amount);
+    if (typeof studentId !== 'string' || !studentId || typeof feeId !== 'string' || !feeId) {
+      return sendError(res, 'Choose a student and assigned fee', 400);
+    }
+    const payable = await getPayableAssignment(req, studentId, feeId, amount);
+    if ('error' in payable) return sendError(res, payable.error, payable.status);
 
+    const payer = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { email: true, name: true, phone: true },
+    });
+    if (!payer) return sendError(res, 'Payment account not found', 404);
+
+    const txRef = `SMS-${uuidv4()}`;
+    const currency = 'USD';
     const result = await initFlutterwavePayment({
-      amount, currency, email, name, phone, txRef,
+      amount, currency, email: payer.email, name: payer.name, phone: payer.phone || undefined, txRef,
       redirectUrl: `${process.env.FRONTEND_URL}/fees/verify?ref=${txRef}`,
-      meta: { studentId, feeId },
+      meta: { studentId, feeId, feeAssignmentId: payable.assignment.id },
     });
 
     await prisma.feePayment.create({
-      data: { studentId, feeId, amount, method: 'FLUTTERWAVE', flutterwaveRef: txRef, status: 'PENDING' },
+      data: {
+        studentId, feeId, amount, method: 'FLUTTERWAVE', flutterwaveRef: txRef,
+        feeAssignmentId: payable.assignment.id, status: 'PENDING',
+      },
     });
 
     return sendSuccess(res, { paymentLink: result.link, txRef });
@@ -280,19 +377,30 @@ export async function initFlutterwave(req: AuthRequest, res: Response, next: Nex
 
 export async function verifyFlutterwave(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const { transactionId } = req.query as { transactionId: string };
+    const transactionId = req.query.transactionId;
+    if (typeof transactionId !== 'string' || !transactionId) return sendError(res, 'Payment transaction is required', 400);
     const result = await verifyFlutterwavePayment(transactionId);
+    if (result.status !== 'successful') return sendError(res, 'Payment not successful', 402);
 
-    if (result.status === 'successful') {
-      const meta = result.meta;
-      await prisma.feePayment.updateMany({
-        where: { flutterwaveRef: result.tx_ref },
-        data: { status: 'PAID', transactionRef: transactionId },
-      });
-      return sendSuccess(res, { status: 'PAID' }, 'Payment verified');
-    }
+    const payment = typeof result.tx_ref === 'string'
+      ? await prisma.feePayment.findFirst({
+          where: { flutterwaveRef: result.tx_ref },
+          select: { id: true, studentId: true, amount: true, status: true },
+        })
+      : null;
+    if (!payment) return sendError(res, 'Payment record not found', 404);
+    if (!(await canPayForStudent(req, payment.studentId))) return sendError(res, 'You cannot verify this payment', 403);
+    if (
+      result.currency !== 'USD' ||
+      Math.round(Number(result.amount) * 100) !== Math.round(payment.amount * 100)
+    ) return sendError(res, 'Payment amount could not be verified', 402);
 
-    return sendError(res, 'Payment not successful', 402);
+    await prisma.feePayment.update({
+      where: { id: payment.id },
+      data: { transactionRef: transactionId },
+    });
+    await settleOnlineFeePayment(payment.id);
+    return sendSuccess(res, { status: 'PAID' }, 'Payment verified');
   } catch (err) { next(err); }
 }
 
