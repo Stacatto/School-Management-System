@@ -7,6 +7,7 @@ import rateLimit from 'express-rate-limit';
 
 import { initSentry, setupSentryErrorHandler } from './utils/sentry';
 import { gdprHeaders, auditConsent } from './middleware/gdpr';
+import { auditMutations } from './middleware/auditLog';
 import { metricsMiddleware, metricsHandler } from './utils/metrics';
 import { errorHandler } from './middleware/errorHandler';
 import { notFound } from './middleware/notFound';
@@ -34,6 +35,7 @@ import elearningRoutes from './modules/elearning/elearning.routes';
 import parentRoutes from './modules/parent/parent.routes';
 import pushRoutes from './modules/push/push.routes';
 import gdprRoutes from './modules/gdpr/gdpr.routes';
+import auditRoutes from './modules/audit/audit.routes';
 
 const app = express();
 
@@ -91,6 +93,7 @@ app.use((req, res, next) => {
 app.use(morgan('combined'));
 app.use(metricsMiddleware);
 app.use(auditConsent);
+app.use(auditMutations);
 
 // Health & metrics
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -120,6 +123,7 @@ app.use(`${api}/announcements`, announcementRoutes);
 app.use(`${api}/elearning`, elearningRoutes);
 app.use(`${api}/parent`, parentRoutes);
 app.use(`${api}/gdpr`, gdprRoutes);
+app.use(`${api}/audit-logs`, auditRoutes);
 
 // Sentry v8 error handler (must be before custom error handler)
 setupSentryErrorHandler(app);
