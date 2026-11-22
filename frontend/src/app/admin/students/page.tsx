@@ -9,6 +9,7 @@ import { studentsAPI, classesAPI } from '@/lib/api';
 import { Plus, Edit, Trash2, UserCheck, UserX, CheckCircle, Clock, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '@/lib/utils';
+import { useAuthStore } from '@/store/authStore';
 
 type Student = {
   id: string;
@@ -24,26 +25,28 @@ type Student = {
 const EMPTY_FORM = { name: '', email: '', password: '', admissionNo: '', classId: '', parentName: '', parentPhone: '' };
 
 export default function StudentsPage() {
+  const { user } = useAuthStore();
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['students-all'],
+    queryKey: ['students-all', user?.id],
     queryFn: () => studentsAPI.list({ limit: 500 }).then(r => r.data),
+    enabled: !!user?.id,
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => studentsAPI.delete(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['students-all'] }); toast.success('Student removed'); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['students-all', user?.id] }); toast.success('Student removed'); },
     onError: () => toast.error('Failed to delete'),
   });
 
   const createMutation = useMutation({
     mutationFn: (body: typeof form) => studentsAPI.create(body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['students-all'] });
+      queryClient.invalidateQueries({ queryKey: ['students-all', user?.id] });
       toast.success('Student added');
       setShowAdd(false);
       setForm(EMPTY_FORM);
@@ -54,7 +57,7 @@ export default function StudentsPage() {
   const updateMutation = useMutation({
     mutationFn: (body: typeof form) => studentsAPI.update(editingStudent!.id, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['students-all'] });
+      queryClient.invalidateQueries({ queryKey: ['students-all', user?.id] });
       toast.success('Student updated');
       setShowAdd(false);
       setEditingStudent(null);
@@ -73,13 +76,15 @@ export default function StudentsPage() {
   }, []);
 
   const { data: classesData } = useQuery({
-    queryKey: ['classes'],
+    queryKey: ['classes', user?.id],
     queryFn: () => classesAPI.list().then(r => r.data.data?.data ?? r.data.data ?? []),
+    enabled: !!user?.id,
   });
 
   const students: Student[] = data?.data || [];
 
-  const columns = useMemo<ColumnDef<Student, any>[]>(() => [
+  const columns = useMemo<ColumnDef<Student, any>[]>(() => {
+    const allColumns: ColumnDef<Student, any>[] = [
     {
       accessorFn: row => row.user?.name,
       id: 'name',
@@ -179,7 +184,11 @@ export default function StudentsPage() {
         </div>
       ),
     },
-  ], [deleteMutation, openEdit]);
+    ];
+    return user?.role === 'ADMIN'
+      ? allColumns
+      : allColumns.filter(column => column.id !== 'feeStatus' && column.id !== 'actions');
+  }, [deleteMutation, openEdit, user?.role]);
 
   const active = students.length;
   const classes = [...new Set(students.map(s => s.class?.name).filter(Boolean))].length;
@@ -250,7 +259,7 @@ export default function StudentsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">{editingStudent ? 'Password (unchanged)' : 'Password'}</label>
-                {!editingStudent && <input className="input" type="password" placeholder="Temporary password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />}
+                {!editingStudent && <input className="input" type="password" placeholder="Temporary password (8+ characters)" minLength={8} maxLength={100} value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />}
               </div>
               <div>
                 <label className="label">Admission No.</label>
@@ -281,7 +290,7 @@ export default function StudentsPage() {
             <button className="btn-secondary flex-1" onClick={() => { setShowAdd(false); setEditingStudent(null); setForm(EMPTY_FORM); }}>Cancel</button>
             <button
               className="btn-primary flex-1"
-              disabled={!form.name || !form.email || (!editingStudent && !form.password) || createMutation.isPending || updateMutation.isPending}
+              disabled={!form.name || !form.email || (!editingStudent && form.password.length < 8) || createMutation.isPending || updateMutation.isPending}
               onClick={() => editingStudent ? updateMutation.mutate(form) : createMutation.mutate(form)}
             >
               {createMutation.isPending || updateMutation.isPending ? 'Saving…' : editingStudent ? 'Save Changes' : 'Add Student'}
