@@ -1,0 +1,171 @@
+name: Database Backup and Restore Check
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schoolms-database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup-and-restore-check:
+    name: Encrypted backup and isolated restore check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SCHOOLMS_BACKUP_DATABASE_URL: ${{ secrets.SCHOOLMS_BACKUP_DATABASE_URL }}
+      SCHOOLMS_BACKUP_ENCRYPTION_KEY: ${{ secrets.SCHOOLMS_BACKUP_ENCRYPTION_KEY }}
+    steps:
+      - name: Check backup secrets
+        id: configuration
+        shell: bash
+        run: |
+          if [[ -z "$SCHOOLMS_BACKUP_DATABASE_URL" || -z "$SCHOOLMS_BACKUP_ENCRYPTION_KEY" ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Database backup skipped"
+              echo
+              echo "No backup was created. Add the two Actions secrets described in [the recovery runbook](../../blob/main/docs/operations/database-backup-restore.md), then run this workflow again."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Backup not configured::No backup was created because one or both required Actions secrets are missing."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect database version and create a compressed dump
+        if: steps.configuration.outputs.ready == 'true'
+        id: dump
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+
+          server_version_num="$(docker run --rm \
+            -e SCHOOLMS_BACKUP_DATABASE_URL \
+            postgres:18-alpine \
+            sh -ec 'psql "$SCHOOLMS_BACKUP_DATABASE_URL" -X -qAt -c "SHOW server_version_num"')"
+          if [[ ! "$server_version_num" =~ ^[0-9]+$ ]]; then
+            echo "Could not determine the PostgreSQL server version." >&2
+            exit 1
+          fi
+          server_major="$((server_version_num / 10000))"
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          dump_path="$RUNNER_TEMP/schoolms-${timestamp}.dump"
+
+          docker run --rm --network host \
+            -e SCHOOLMS_BACKUP_DATABASE_URL \
+            -v "$RUNNER_TEMP:/backup" \
+            "postgres:${server_major}-alpine" \
+            sh -ec "pg_dump \"\$SCHOOLMS_BACKUP_DATABASE_URL\" --format=custom --compress=9 --no-owner --no-acl --file=/backup/$(basename "$dump_path")"
+
+          if [[ ! -s "$dump_path" ]]; then
+            echo "The database dump is empty or was not created." >&2
+            exit 1
+          fi
+          echo "server_major=$server_major" >> "$GITHUB_OUTPUT"
+          echo "dump_path=$dump_path" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the dump into a temporary database
+        if: steps.configuration.outputs.ready == 'true'
+        shell: bash
+        env:
+          SERVER_MAJOR: ${{ steps.dump.outputs.server_major }}
+          DUMP_PATH: ${{ steps.dump.outputs.dump_path }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          docker run -d --name schoolms-restore-check --network host \
+            -e POSTGRES_PASSWORD=restore-check-only \
+            -e POSTGRES_DB=schoolms_restore_check \
+            "postgres:${SERVER_MAJOR}-alpine" >/dev/null
+
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker run --rm --network host "postgres:${SERVER_MAJOR}-alpine" \
+              pg_isready -q -h 127.0.0.1 -p 5432 -U postgres; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != true ]]; then
+            echo "The temporary PostgreSQL instance did not become ready." >&2
+            exit 1
+          fi
+
+          docker run --rm --network host -v "$RUNNER_TEMP:/backup:ro" \
+            "postgres:${SERVER_MAJOR}-alpine" \
+            pg_restore --exit-on-error --no-owner --no-acl \
+              --dbname=postgresql://postgres:restore-check-only@127.0.0.1:5432/schoolms_restore_check \
+              "/backup/$(basename "$DUMP_PATH")"
+
+          table_count="$(docker run --rm --network host \
+            "postgres:${SERVER_MAJOR}-alpine" \
+            psql -X -qAt \
+              --dbname=postgresql://postgres:restore-check-only@127.0.0.1:5432/schoolms_restore_check \
+              -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
+          if [[ ! "$table_count" =~ ^[0-9]+$ || "$table_count" -lt 1 ]]; then
+            echo "The restored database contains no public tables." >&2
+            exit 1
+          fi
+          echo "Restore check passed; restored public table count: $table_count."
+
+      - name: Encrypt the dump and verify the encrypted copy
+        if: steps.configuration.outputs.ready == 'true'
+        id: encrypt
+        shell: bash
+        env:
+          DUMP_PATH: ${{ steps.dump.outputs.dump_path }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          encrypted_path="${DUMP_PATH}.gpg"
+          verified_path="${DUMP_PATH}.verified"
+          printf '%s' "$SCHOOLMS_BACKUP_ENCRYPTION_KEY" | \
+            gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 0 \
+              --symmetric --cipher-algo AES256 --output "$encrypted_path" "$DUMP_PATH"
+          printf '%s' "$SCHOOLMS_BACKUP_ENCRYPTION_KEY" | \
+            gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 0 \
+              --decrypt --output "$verified_path" "$encrypted_path"
+          cmp -s "$DUMP_PATH" "$verified_path"
+          rm -f "$DUMP_PATH" "$verified_path"
+          echo "encrypted_path=$encrypted_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload encrypted backup
+        if: steps.configuration.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: schoolms-database-backup-${{ github.run_id }}
+          path: ${{ steps.encrypt.outputs.encrypted_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record backup result
+        if: steps.configuration.outputs.ready == 'true'
+        shell: bash
+        env:
+          SERVER_MAJOR: ${{ steps.dump.outputs.server_major }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          {
+            echo "## Database backup and restore check passed"
+            echo
+            echo "- PostgreSQL major version: ${SERVER_MAJOR}"
+            echo "- The dump restored into a temporary database."
+            echo "- The verified backup artifact is encrypted and retained for 30 days."
+            echo "- Artifact: [schoolms-database-backup-${RUN_ID}](../../actions/runs/${RUN_ID})"
+            echo
+            echo "This short-term artifact complements the database provider's point-in-time recovery; it is not a long-term archive."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary restore database
+        if: always()
+        shell: bash
+        run: docker rm -f schoolms-restore-check >/dev/null 2>&1 || true
