@@ -151,11 +151,9 @@ async function getAllowedRecipientIds(userId: string, role: string, email: strin
         select: { id: true },
       });
       classIds = classes.map(cls => cls.id);
-      const students = await prisma.student.findMany({ where: { classId: { in: classIds } }, select: { userId: true, parentEmail: true } });
+      const students = await prisma.student.findMany({ where: { classId: { in: classIds } }, select: { userId: true, guardians: { select: { parentUserId: true } } } });
       students.forEach(student => allowed.add(student.userId));
-      const parentEmails = [...new Set(students.map(student => student.parentEmail).filter((value): value is string => Boolean(value)))];
-      const parents = parentEmails.length ? await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true } }) : [];
-      parents.forEach(parent => allowed.add(parent.id));
+      students.flatMap(student => student.guardians.map(guardian => guardian.parentUserId)).forEach(parentId => allowed.add(parentId));
     }
     return allowed;
   }
@@ -164,7 +162,7 @@ async function getAllowedRecipientIds(userId: string, role: string, email: strin
     const student = await prisma.student.findUnique({ where: { userId }, select: { classId: true } });
     if (student?.classId) classIds = [student.classId];
   } else if (role === 'PARENT') {
-    const students = await prisma.student.findMany({ where: { parentEmail: email }, select: { classId: true } });
+    const students = await prisma.student.findMany({ where: { guardians: { some: { parentUserId: userId } } }, select: { classId: true } });
     classIds = [...new Set(students.map(student => student.classId).filter((value): value is string => Boolean(value)))];
   }
 

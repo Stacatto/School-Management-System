@@ -198,10 +198,10 @@ export async function getAssignments(req: AuthRequest, res: Response, next: Next
 }
 
 async function canAccessStudent(req: AuthRequest, studentId: string): Promise<boolean> {
-  const student = await prisma.student.findUnique({ where: { id: studentId }, select: { userId: true, parentEmail: true, classId: true } });
+  const student = await prisma.student.findUnique({ where: { id: studentId }, select: { userId: true, classId: true, guardians: { where: { parentUserId: req.user!.id }, select: { id: true } } } });
   if (!student) return false;
   if (req.user!.role === 'ADMIN' || student.userId === req.user!.id) return true;
-  if (req.user!.role === 'PARENT' && req.user!.email && student.parentEmail?.toLowerCase() === req.user!.email.toLowerCase()) return true;
+  if (req.user!.role === 'PARENT' && student.guardians.length > 0) return true;
   if (req.user!.role !== 'TEACHER' || !student.classId) return false;
   const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
   if (!teacher) return false;

@@ -50,6 +50,7 @@ export const studentsAPI = {
   get: (id: string) => api.get(`/students/${id}`),
   create: (data: any) => api.post('/students', data),
   update: (id: string, data: any) => api.put(`/students/${id}`, data),
+  inviteGuardian: (id: string, email: string) => api.post(`/students/${id}/guardian-invitations`, { email }),
   delete: (id: string) => api.delete(`/students/${id}`),
   grades: (id: string) => api.get(`/students/${id}/grades`),
   attendance: (id: string) => api.get(`/students/${id}/attendance`),

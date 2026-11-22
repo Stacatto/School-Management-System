@@ -16,7 +16,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
       const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
       where = teacher ? { OR: [{ teacherId: teacher.id }, { timetable: { some: { teacherId: teacher.id } } }] } : { id: '__no_class__' };
     } else if (req.user!.role === 'PARENT') {
-      const students = await prisma.student.findMany({ where: { parentEmail: req.user!.email }, select: { classId: true } });
+      const students = await prisma.student.findMany({ where: { guardians: { some: { parentUserId: req.user!.id } } }, select: { classId: true } });
       const classIds = [...new Set(students.map(student => student.classId).filter((id): id is string => Boolean(id)))];
       where.id = { in: classIds };
     }
@@ -140,7 +140,7 @@ export async function getStudents(req: AuthRequest, res: Response, next: NextFun
       const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { classId: true } });
       if (student?.classId !== cls.id) return sendError(res, 'Class not found', 404);
     } else if (req.user!.role === 'PARENT') {
-      const linked = await prisma.student.findFirst({ where: { parentEmail: req.user!.email, classId: cls.id }, select: { id: true } });
+      const linked = await prisma.student.findFirst({ where: { classId: cls.id, guardians: { some: { parentUserId: req.user!.id } } }, select: { id: true } });
       if (!linked) return sendError(res, 'Class not found', 404);
     } else if (req.user!.role === 'TEACHER') {
       const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
