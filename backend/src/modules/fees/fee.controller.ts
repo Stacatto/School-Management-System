@@ -351,7 +351,7 @@ export async function initFlutterwave(req: AuthRequest, res: Response, next: Nex
     if (!payer) return sendError(res, 'Payment account not found', 404);
 
     const txRef = `SMS-${uuidv4()}`;
-    const currency = 'NGN';
+    const currency = 'USD';
     const result = await initFlutterwavePayment({
       amount, currency, email: payer.email, name: payer.name, phone: payer.phone || undefined, txRef,
       redirectUrl: `${process.env.FRONTEND_URL}/fees/verify?ref=${txRef}`,
@@ -385,7 +385,7 @@ export async function verifyFlutterwave(req: AuthRequest, res: Response, next: N
     if (!payment) return sendError(res, 'Payment record not found', 404);
     if (!(await canPayForStudent(req, payment.studentId))) return sendError(res, 'You cannot verify this payment', 403);
     if (
-      result.currency !== 'NGN' ||
+      result.currency !== 'USD' ||
       Math.round(Number(result.amount) * 100) !== Math.round(payment.amount * 100)
     ) return sendError(res, 'Payment amount could not be verified', 402);
 
