@@ -101,7 +101,7 @@ export async function addResults(req: AuthRequest, res: Response, next: NextFunc
     );
     const parentEmails = [...new Set(enrolledStudents.map(student => student.parentEmail).filter((email): email is string => Boolean(email)))];
     const parents = await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true } });
-    await notifyUsers([...enrolledStudents.map(student => student.userId), ...parents.map(parent => parent.id)], 'Exam results available', `Results for ${exam.title} have been recorded. Sign in to SchoolMS to view the scores.`);
+    await notifyUsers([...enrolledStudents.map(student => student.userId), ...parents.map(parent => parent.id)], 'Exam results available', `Results for ${exam.title} have been recorded. Sign in to SchoolMS to view the scores.`, 'grades');
     return sendSuccess(res, saved, 'Results saved');
   } catch (err) { next(err); }
 }
