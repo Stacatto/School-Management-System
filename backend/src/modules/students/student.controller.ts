@@ -7,14 +7,25 @@ import bcrypt from 'bcryptjs';
 
 export async function list(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
+    const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
+    const limit = Math.min(500, Math.max(1, Math.floor(Number(req.query.limit) || 20)));
     const search = (req.query.search as string) || '';
 
-    const result = await withCache(`students:list:${page}:${limit}:${search}`, 120, async () => {
-      const where = search
+    const where: any = search
         ? { OR: [{ user: { name: { contains: search, mode: 'insensitive' as const } } }, { admissionNo: { contains: search, mode: 'insensitive' as const } }] }
         : {};
+    if (req.user!.role === 'TEACHER') {
+      const teacher = prisma.teacher
+        ? await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } })
+        : null;
+      const classes = teacher && prisma.class ? await prisma.class.findMany({
+        where: { OR: [{ teacherId: teacher.id }, { timetable: { some: { teacherId: teacher.id } } }] },
+        select: { id: true },
+      }) : [];
+      where.classId = { in: classes.map(cls => cls.id) };
+    }
+
+    const result = await withCache(`students:list:${req.user!.id}:${page}:${limit}:${search}`, 120, async () => {
       const [students, total] = await Promise.all([
         prisma.student.findMany({
           where,
@@ -23,7 +34,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
           include: {
             class: true,
             user: { select: { name: true, email: true, avatar: true } },
-            feePayments: { select: { status: true }, take: 5 },
+            ...(req.user!.role === 'ADMIN' ? { feePayments: { select: { status: true }, take: 5 } } : {}),
           },
           orderBy: { createdAt: 'desc' },
         }),
@@ -42,6 +53,16 @@ export async function create(req: AuthRequest, res: Response, next: NextFunction
 
     if (!name || !email) return sendError(res, 'Name and email are required', 400);
 
+    if (req.user!.role === 'TEACHER') {
+      if (!classId) return sendError(res, 'Choose a class you teach for this student', 400);
+      const teacher = await prisma.teacher.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
+      const classAccess = teacher ? await prisma.class.findFirst({
+        where: { id: classId, OR: [{ teacherId: teacher.id }, { timetable: { some: { teacherId: teacher.id } } }] },
+        select: { id: true },
+      }) : null;
+      if (!classAccess) return sendError(res, 'You can only add students to a class you teach', 403);
+    }
+
     if (classId) {
       const cls = await prisma.class.findUnique({ where: { id: classId }, select: { id: true } });
       if (!cls) return sendError(res, 'Invalid classId', 400);
@@ -53,7 +74,11 @@ export async function create(req: AuthRequest, res: Response, next: NextFunction
       return;
     }
 
-    const hashedPassword = await bcrypt.hash(password || 'Student@123', 12);
+    if (typeof password !== 'string' || password.length < 8 || password.length > 100) {
+      return sendError(res, 'Set a student password between 8 and 100 characters', 400);
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     const student = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
