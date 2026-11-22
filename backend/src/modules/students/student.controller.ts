@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 export async function list(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
-    const limit = Math.min(100, Math.max(1, Math.floor(Number(req.query.limit) || 20)));
+    const limit = Math.min(500, Math.max(1, Math.floor(Number(req.query.limit) || 20)));
     const search = (req.query.search as string) || '';
 
     const where: any = search
