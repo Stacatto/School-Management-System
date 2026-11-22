@@ -88,7 +88,7 @@ export async function addResults(req: AuthRequest, res: Response, next: NextFunc
     if (uniqueResults.some((result: any) => typeof result.studentId !== 'string' || !Number.isFinite(Number(result.score)) || Number(result.score) < 0 || Number(result.score) > exam.totalMarks)) {
       return sendError(res, `Each score must be between 0 and ${exam.totalMarks}`, 400);
     }
-    const enrolledStudents = await prisma.student.findMany({ where: { id: { in: uniqueResults.map((result: any) => result.studentId) }, classId: exam.classId }, select: { id: true, userId: true, parentEmail: true } });
+    const enrolledStudents = await prisma.student.findMany({ where: { id: { in: uniqueResults.map((result: any) => result.studentId) }, classId: exam.classId }, select: { id: true, userId: true, guardians: { select: { parentUserId: true } } } });
     if (enrolledStudents.length !== uniqueResults.length) return sendError(res, 'Every result must belong to a student in the exam class', 400);
     const saved = await prisma.$transaction(
       uniqueResults.map((r: any) =>
@@ -99,9 +99,8 @@ export async function addResults(req: AuthRequest, res: Response, next: NextFunc
         })
       )
     );
-    const parentEmails = [...new Set(enrolledStudents.map(student => student.parentEmail).filter((email): email is string => Boolean(email)))];
-    const parents = await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true } });
-    await notifyUsers([...enrolledStudents.map(student => student.userId), ...parents.map(parent => parent.id)], 'Exam results available', `Results for ${exam.title} have been recorded. Sign in to SchoolMS to view the scores.`, 'grades');
+    const parents = [...new Set(enrolledStudents.flatMap(student => student.guardians.map(guardian => guardian.parentUserId)))];
+    await notifyUsers([...enrolledStudents.map(student => student.userId), ...parents], 'Exam results available', `Results for ${exam.title} have been recorded. Sign in to SchoolMS to view the scores.`, 'grades');
     return sendSuccess(res, saved, 'Results saved');
   } catch (err) { next(err); }
 }

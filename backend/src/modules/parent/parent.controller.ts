@@ -3,10 +3,10 @@ import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { sendSuccess, sendError } from '../../utils/apiResponse';
 
-// Parents are linked to students via parentEmail matching their user email
-async function getLinkedStudents(parentEmail: string) {
+// Parent access is granted only by an accepted, explicit guardian invitation.
+async function getLinkedStudents(parentUserId: string) {
   return prisma.student.findMany({
-    where: { parentEmail },
+    where: { guardians: { some: { parentUserId, verifiedAt: { not: null } } } },
     include: {
       user: { select: { name: true, email: true, avatar: true } },
       class: { include: { teacher: { include: { user: { select: { name: true } } } } } },
@@ -16,7 +16,7 @@ async function getLinkedStudents(parentEmail: string) {
 
 async function getAccessibleChild(req: AuthRequest, studentId: string) {
   return prisma.student.findFirst({
-    where: req.user!.role === 'ADMIN' ? { id: studentId } : { id: studentId, parentEmail: req.user!.email },
+    where: req.user!.role === 'ADMIN' ? { id: studentId } : { id: studentId, guardians: { some: { parentUserId: req.user!.id, verifiedAt: { not: null } } } },
     include: {
       user: { select: { name: true, email: true, avatar: true } },
       class: { include: { teacher: { include: { user: { select: { name: true } } } } } },
@@ -26,7 +26,7 @@ async function getAccessibleChild(req: AuthRequest, studentId: string) {
 
 export async function getChildren(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    const children = await getLinkedStudents(req.user!.email);
+    const children = await getLinkedStudents(req.user!.id);
     return sendSuccess(res, children);
   } catch (err) { next(err); }
 }

@@ -6,7 +6,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { DataTable } from '@/components/ui/DataTable';
 import { studentsAPI, classesAPI } from '@/lib/api';
-import { Plus, Edit, Trash2, UserCheck, UserX, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, UserCheck, UserX, CheckCircle, Clock, XCircle, Link2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDate } from '@/lib/utils';
 import { useAuthStore } from '@/store/authStore';
@@ -65,6 +65,21 @@ export default function StudentsPage() {
     },
     onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update student'),
   });
+
+  const inviteGuardian = useCallback(async (student: Student) => {
+    const email = window.prompt(`Guardian email for ${student.user?.name || 'this student'}:`)?.trim();
+    if (!email) return;
+    try {
+      const response = await studentsAPI.inviteGuardian(student.id, email);
+      const invitationUrl = response.data.data?.acceptUrl;
+      if (invitationUrl) {
+        window.prompt('Copy this one-time guardian invitation link and share it privately. It expires in 7 days.', invitationUrl);
+        toast.success('Guardian invitation created');
+      } else toast.error('Invitation created, but no link was returned');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Could not create guardian invitation');
+    }
+  }, []);
 
   const openEdit = useCallback((student: Student) => {
     setEditingStudent(student);
@@ -174,6 +189,9 @@ export default function StudentsPage() {
           <button title="Edit" onClick={() => openEdit(row.original)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors">
             <Edit className="w-4 h-4" />
           </button>
+          {user?.role === 'ADMIN' && <button title="Invite guardian" onClick={() => inviteGuardian(row.original)} className="p-1.5 rounded-lg hover:bg-violet-50 text-gray-400 hover:text-violet-600 transition-colors">
+            <Link2 className="w-4 h-4" />
+          </button>}
           <button
             title="Delete"
             onClick={() => { if (confirm(`Remove ${row.original.user?.name}?`)) deleteMutation.mutate(row.original.id); }}
@@ -188,7 +206,7 @@ export default function StudentsPage() {
     return user?.role === 'ADMIN'
       ? allColumns
       : allColumns.filter(column => column.id !== 'feeStatus' && column.id !== 'actions');
-  }, [deleteMutation, openEdit, user?.role]);
+  }, [deleteMutation, inviteGuardian, openEdit, user?.role]);
 
   const active = students.length;
   const classes = [...new Set(students.map(s => s.class?.name).filter(Boolean))].length;

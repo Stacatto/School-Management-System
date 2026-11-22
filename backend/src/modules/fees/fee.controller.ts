@@ -61,7 +61,7 @@ export async function assignFee(req: AuthRequest, res: Response, next: NextFunct
     const uniqueStudentIds = [...new Set<string>(studentIds)];
     const [fee, students] = await Promise.all([
       prisma.fee.findUnique({ where: { id: feeId } }),
-      prisma.student.findMany({ where: { id: { in: uniqueStudentIds } }, select: { id: true, userId: true, parentEmail: true } }),
+      prisma.student.findMany({ where: { id: { in: uniqueStudentIds } }, select: { id: true, userId: true, guardians: { select: { parentUserId: true } } } }),
     ]);
     if (!fee) return sendError(res, 'Fee structure not found', 404);
     if (students.length !== uniqueStudentIds.length) return sendError(res, 'One or more students could not be found', 400);
@@ -73,9 +73,8 @@ export async function assignFee(req: AuthRequest, res: Response, next: NextFunct
         create: { feeId, studentId, amount: fee.amount, dueDate: fee.dueDate },
       })
     ));
-    const parentEmails = [...new Set(students.map(student => student.parentEmail).filter((email): email is string => Boolean(email)))];
-    const parents = await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true } });
-    await notifyUsers([...students.map(student => student.userId), ...parents.map(parent => parent.id)], 'Fee assigned', `${fee.name} has been assigned to your account.`, 'fees');
+    const parents = [...new Set(students.flatMap(student => student.guardians.map(guardian => guardian.parentUserId)))];
+    await notifyUsers([...students.map(student => student.userId), ...parents], 'Fee assigned', `${fee.name} has been assigned to your account.`, 'fees');
     return sendSuccess(res, assignments, `Fee assigned to ${assignments.length} student${assignments.length === 1 ? '' : 's'}`, 201);
   } catch (err) { next(err); }
 }
@@ -230,7 +229,7 @@ async function getPayableAssignment(req: AuthRequest, studentId: string, feeId: 
   const student = req.user!.role === 'STUDENT'
     ? await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } })
     : req.user!.email
-      ? await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } })
+      ? await prisma.student.findFirst({ where: { id: studentId, guardians: { some: { parentUserId: req.user!.id } } }, select: { id: true } })
       : null;
   if (!student || student.id !== studentId) return { ok: false, error: 'You cannot pay fees for this student', status: 403 };
 
@@ -253,7 +252,7 @@ async function canPayForStudent(req: AuthRequest, studentId: string) {
     return student?.id === studentId;
   }
   if (req.user!.role === 'PARENT' && req.user!.email) {
-    const student = await prisma.student.findFirst({ where: { id: studentId, parentEmail: req.user!.email }, select: { id: true } });
+    const student = await prisma.student.findFirst({ where: { id: studentId, guardians: { some: { parentUserId: req.user!.id } }, }, select: { id: true } });
     return Boolean(student);
   }
   return false;

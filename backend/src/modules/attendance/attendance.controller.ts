@@ -16,7 +16,7 @@ export async function list(req: AuthRequest, res: Response, next: NextFunction) 
       const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
       where.studentId = student?.id || '__no_student__';
     } else if (req.user!.role === 'PARENT') {
-      const linked = await prisma.student.findMany({ where: { parentEmail: req.user!.email }, select: { id: true } });
+      const linked = await prisma.student.findMany({ where: { guardians: { some: { parentUserId: req.user!.id } } }, select: { id: true } });
       const linkedIds = linked.map(student => student.id);
       where.studentId = studentId && linkedIds.includes(String(studentId)) ? String(studentId) : { in: linkedIds };
     } else if (req.user!.role === 'TEACHER') {
@@ -68,14 +68,11 @@ export async function markBulk(req: AuthRequest, res: Response, next: NextFuncti
     );
     const alertRecords = uniqueRecords.filter((record: any) => record.status === 'ABSENT' || record.status === 'LATE');
     if (alertRecords.length) {
-      const affected = await prisma.student.findMany({ where: { id: { in: alertRecords.map((record: any) => record.studentId) } }, select: { id: true, userId: true, parentEmail: true } });
-      const parentEmails = [...new Set(affected.map(student => student.parentEmail).filter((email): email is string => Boolean(email)))];
-      const parents = await prisma.user.findMany({ where: { email: { in: parentEmails }, role: 'PARENT' }, select: { id: true, email: true } });
-      const parentByEmail = new Map(parents.map(parent => [parent.email.toLowerCase(), parent.id]));
+      const affected = await prisma.student.findMany({ where: { id: { in: alertRecords.map((record: any) => record.studentId) } }, select: { id: true, userId: true, guardians: { select: { parentUserId: true } } } });
       await Promise.all(alertRecords.map(async (record: any) => {
         const student = affected.find(item => item.id === record.studentId);
         if (!student) return;
-        const recipients = [student.userId, student.parentEmail ? parentByEmail.get(student.parentEmail.toLowerCase()) : undefined].filter((id): id is string => Boolean(id));
+        const recipients = [student.userId, ...student.guardians.map(guardian => guardian.parentUserId)];
         await notifyUsers(recipients, 'Attendance updated', `Attendance was marked ${record.status.toLowerCase()} on ${attendanceDate.toLocaleDateString()}.`, 'attendance');
       }));
     }
@@ -91,7 +88,7 @@ export async function summary(req: AuthRequest, res: Response, next: NextFunctio
       const student = await prisma.student.findUnique({ where: { userId: req.user!.id }, select: { id: true } });
       where.studentId = student?.id || '__no_student__';
     } else if (req.user!.role === 'PARENT') {
-      const linked = await prisma.student.findMany({ where: { parentEmail: req.user!.email }, select: { id: true } });
+      const linked = await prisma.student.findMany({ where: { guardians: { some: { parentUserId: req.user!.id } } }, select: { id: true } });
       const linkedIds = linked.map(student => student.id);
       where.studentId = studentId && linkedIds.includes(String(studentId)) ? String(studentId) : { in: linkedIds };
     } else if (req.user!.role === 'TEACHER') {

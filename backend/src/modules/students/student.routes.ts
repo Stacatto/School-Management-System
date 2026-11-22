@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as ctrl from './student.controller';
 import { authenticate } from '../../middleware/auth';
 import { authorize } from '../../middleware/rbac';
+import * as guardianCtrl from '../parent/guardian.controller';
 
 const router = Router();
 router.use(authenticate);
@@ -10,6 +11,7 @@ router.get('/', authorize('ADMIN', 'TEACHER'), ctrl.list);
 router.post('/', authorize('ADMIN', 'TEACHER'), ctrl.create);
 router.get('/:id', ctrl.getOne);
 router.put('/:id', authorize('ADMIN'), ctrl.update);
+router.post('/:id/guardian-invitations', authorize('ADMIN'), guardianCtrl.createInvitation);
 router.delete('/:id', authorize('ADMIN'), ctrl.remove);
 router.get('/:id/grades', ctrl.getGrades);
 router.get('/:id/attendance', ctrl.getAttendance);

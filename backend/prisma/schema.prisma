@@ -36,6 +36,8 @@ model User {
   pushSubscriptions PushSubscription[]
   student           Student?
   teacher           Teacher?
+  guardianships     StudentGuardian[]
+  guardianInvitesCreated GuardianInvitation[] @relation("GuardianInvitationCreator")
 
   @@map("users")
 }
@@ -64,8 +66,42 @@ model Student {
   class            Class?                 @relation(fields: [classId], references: [id])
   transportRoute   TransportRoute?        @relation(fields: [transportRouteId], references: [id])
   user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guardians        StudentGuardian[]
+  guardianInvitations GuardianInvitation[]
 
   @@map("students")
+}
+
+model StudentGuardian {
+  id             String   @id @default(uuid())
+  studentId      String
+  parentUserId   String
+  verifiedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  student        Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent         User     @relation(fields: [parentUserId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, parentUserId])
+  @@index([parentUserId])
+  @@map("student_guardians")
+}
+
+model GuardianInvitation {
+  id          String    @id @default(uuid())
+  studentId   String
+  email       String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  createdBy   User     @relation("GuardianInvitationCreator", fields: [createdById], references: [id])
+
+  @@index([studentId, email])
+  @@index([expiresAt])
+  @@map("guardian_invitations")
 }
 
 model Teacher {
