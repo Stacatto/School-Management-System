@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -30,6 +30,10 @@ export default function StudentsPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [guardianInviteStudent, setGuardianInviteStudent] = useState<Student | null>(null);
+  const [guardianEmail, setGuardianEmail] = useState('');
+  const [guardianInviteUrl, setGuardianInviteUrl] = useState('');
+  const [guardianInviteLoading, setGuardianInviteLoading] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['students-all', user?.id],
@@ -66,20 +70,28 @@ export default function StudentsPage() {
     onError: (err: any) => toast.error(err?.response?.data?.message || 'Failed to update student'),
   });
 
-  const inviteGuardian = useCallback(async (student: Student) => {
-    const email = window.prompt(`Guardian email for ${student.user?.name || 'this student'}:`)?.trim();
-    if (!email) return;
+  const openGuardianInvite = useCallback((student: Student) => {
+    setGuardianInviteStudent(student);
+    setGuardianEmail('');
+    setGuardianInviteUrl('');
+  }, []);
+
+  const submitGuardianInvite = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!guardianInviteStudent) return;
+    const email = guardianEmail.trim();
     try {
-      const response = await studentsAPI.inviteGuardian(student.id, email);
+      setGuardianInviteLoading(true);
+      const response = await studentsAPI.inviteGuardian(guardianInviteStudent.id, email);
       const invitationUrl = response.data.data?.acceptUrl;
       if (invitationUrl) {
-        window.prompt('Copy this one-time guardian invitation link and share it privately. It expires in 7 days.', invitationUrl);
+        setGuardianInviteUrl(invitationUrl);
         toast.success('Guardian invitation created');
       } else toast.error('Invitation created, but no link was returned');
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Could not create guardian invitation');
-    }
-  }, []);
+    } finally { setGuardianInviteLoading(false); }
+  };
 
   const openEdit = useCallback((student: Student) => {
     setEditingStudent(student);
@@ -189,8 +201,8 @@ export default function StudentsPage() {
           <button title="Edit" onClick={() => openEdit(row.original)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors">
             <Edit className="w-4 h-4" />
           </button>
-          {user?.role === 'ADMIN' && <button title="Invite guardian" onClick={() => inviteGuardian(row.original)} className="p-1.5 rounded-lg hover:bg-violet-50 text-gray-400 hover:text-violet-600 transition-colors">
-            <Link2 className="w-4 h-4" />
+          {user?.role === 'ADMIN' && <button type="button" title="Invite guardian" aria-label={`Invite guardian for ${row.original.user?.name || 'student'}`} onClick={() => openGuardianInvite(row.original)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50 transition-colors">
+            <Link2 className="w-4 h-4" /> <span>Invite</span>
           </button>}
           <button
             title="Delete"
@@ -206,7 +218,7 @@ export default function StudentsPage() {
     return user?.role === 'ADMIN'
       ? allColumns
       : allColumns.filter(column => column.id !== 'feeStatus' && column.id !== 'actions');
-  }, [deleteMutation, inviteGuardian, openEdit, user?.role]);
+  }, [deleteMutation, openEdit, openGuardianInvite, user?.role]);
 
   const active = students.length;
   const classes = [...new Set(students.map(s => s.class?.name).filter(Boolean))].length;
@@ -314,6 +326,33 @@ export default function StudentsPage() {
               {createMutation.isPending || updateMutation.isPending ? 'Saving…' : editingStudent ? 'Save Changes' : 'Add Student'}
             </button>
           </div>
+        </div>
+      </div>
+    )}
+
+    {guardianInviteStudent && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="guardian-invite-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+          <h2 id="guardian-invite-title" className="text-lg font-semibold text-gray-900">Invite a guardian</h2>
+          <p className="mt-1 text-sm text-gray-600">Create a private, one-time link for {guardianInviteStudent.user?.name || 'this student'}. It expires in seven days.</p>
+          {!guardianInviteUrl ? (
+            <form onSubmit={submitGuardianInvite} className="mt-5 space-y-4">
+              <label className="block"><span className="label">Guardian email</span><input className="input" type="email" autoComplete="email" required value={guardianEmail} onChange={e => setGuardianEmail(e.target.value)} placeholder="guardian@example.com" /></label>
+              <div className="flex gap-3">
+                <button type="button" className="btn-secondary flex-1" onClick={() => setGuardianInviteStudent(null)}>Cancel</button>
+                <button type="submit" className="btn-primary flex-1" disabled={guardianInviteLoading}>{guardianInviteLoading ? 'Creating link…' : 'Create invitation'}</button>
+              </div>
+            </form>
+          ) : (
+            <div className="mt-5 space-y-4">
+              <p className="text-sm text-gray-700">Share this link privately with the guardian. It can be used once.</p>
+              <input aria-label="Guardian invitation link" className="input font-mono text-xs" readOnly value={guardianInviteUrl} onFocus={e => e.currentTarget.select()} />
+              <div className="flex gap-3">
+                <button type="button" className="btn-secondary flex-1" onClick={() => setGuardianInviteStudent(null)}>Close</button>
+                <button type="button" className="btn-primary flex-1" onClick={async () => { try { await navigator.clipboard.writeText(guardianInviteUrl); toast.success('Invitation link copied'); } catch { toast.error('Copy failed. Select and copy the link above.'); } }}>Copy invitation link</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     )}
