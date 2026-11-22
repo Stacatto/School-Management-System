@@ -7,6 +7,16 @@ import { sendEmail } from '../../utils/email';
 import { withCache, invalidatePattern } from '../../utils/cache';
 import { notificationCategoryEnabled, notifyUsers } from '../../utils/inAppNotifications';
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[character]!));
+}
+
 export async function list(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const role = req.user!.role;
