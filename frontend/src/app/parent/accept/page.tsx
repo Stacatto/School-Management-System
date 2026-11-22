@@ -26,7 +26,7 @@ export default function AcceptGuardianInvitationPage() {
       else await api.post('/parent/accept-invitation', { token, name, password });
       toast.success('Guardian link confirmed');
       if (user?.role === 'PARENT') router.push('/parent/dashboard');
-      else router.push('/login');
+      else router.push('/parent/login');
     } catch (err: any) {
       const message = err?.response?.data?.message || 'Could not accept this invitation';
       setError(message);

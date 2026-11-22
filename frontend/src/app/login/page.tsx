@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
@@ -251,6 +252,10 @@ export default function LoginPage() {
           </div>
 
           <p className="text-center text-xs text-gray-300 mt-5">Available 24/7 · Help &amp; Support</p>
+          <p className="text-center text-sm text-gray-500 mt-3">
+            Parent or guardian?{' '}
+            <Link href="/parent/login" className="font-semibold text-primary-600 hover:underline">Sign in here</Link>
+          </p>
         </div>
       </div>
     </div>
