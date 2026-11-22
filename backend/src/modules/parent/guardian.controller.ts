@@ -14,7 +14,7 @@ export async function createInvitation(req: AuthRequest, res: Response, next: Ne
     if (!/^\S+@\S+\.\S+$/.test(email)) return sendError(res, 'Enter a valid guardian email address', 400);
     const student = await prisma.student.findUnique({ where: { id: studentId }, include: { user: { select: { name: true } } } });
     if (!student) return sendError(res, 'Student not found', 404);
-    const existing = await prisma.user.findUnique({ where: { email }, select: { id: true, role: true } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true, role: true } });
     if (existing && existing.role !== 'PARENT') return sendError(res, 'That email belongs to a non-parent account', 409);
     if (existing && await prisma.studentGuardian.findUnique({ where: { studentId_parentUserId: { studentId, parentUserId: existing.id } } })) {
       return sendError(res, 'This guardian is already linked to the student', 409);
@@ -41,7 +41,7 @@ export async function acceptInvitation(req: Request, res: Response, next: NextFu
     const invitation = await prisma.guardianInvitation.findUnique({ where: { tokenHash: digest(token) }, include: { student: { include: { user: { select: { name: true } } } } } });
     if (!invitation || invitation.acceptedAt || invitation.revokedAt || invitation.expiresAt <= new Date()) return sendError(res, 'Invalid or expired invitation', 400);
     const email = invitation.email.toLowerCase();
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } });
     if (existing) return sendError(res, existing.role === 'PARENT' ? 'This email already has an account. Sign in first, then accept the invitation.' : 'This invitation email belongs to a non-parent account.', 409);
     if (typeof name !== 'string' || name.trim().length < 2 || typeof password !== 'string' || password.length < 12 || password.length > 100) {
       return sendError(res, 'Enter your name and a password with at least 12 characters', 400);
