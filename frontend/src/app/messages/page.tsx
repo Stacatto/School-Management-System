@@ -30,20 +30,20 @@ export default function MessagesPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const queryClient = useQueryClient();
 
-  const { data: recipients = [] } = useQuery({ queryKey: ['message-recipients'], queryFn: () => api.get('/messages/recipients').then(r => r.data.data), enabled: newConversationOpen });
+  const { data: recipients = [], isError: recipientsError } = useQuery({ queryKey: ['message-recipients', user?.id], queryFn: () => api.get('/messages/recipients').then(r => r.data.data), enabled: newConversationOpen && !!user?.id });
   const createConversation = useMutation({
     mutationFn: () => api.post('/messages/conversations', { recipientId }),
-    onSuccess: response => { setSelectedConv(response.data.data.id); setNewConversationOpen(false); setRecipientId(''); queryClient.invalidateQueries({ queryKey: ['conversations'] }); },
+    onSuccess: response => { setSelectedConv(response.data.data.id); setNewConversationOpen(false); setRecipientId(''); queryClient.invalidateQueries({ queryKey: ['conversations', user?.id] }); },
   });
 
   const { data: conversations = [], isError: conversationsError } = useQuery({
-    queryKey: ['conversations'],
+    queryKey: ['conversations', user?.id],
     queryFn: () => api.get('/messages/conversations').then(r => r.data.data),
     refetchInterval: 10000,
   });
 
   const { data: messages = [], isError: messagesError } = useQuery({
-    queryKey: ['messages', selectedConv],
+    queryKey: ['messages', user?.id, selectedConv],
     queryFn: () => api.get(`/messages/conversations/${selectedConv}/messages`).then(r => r.data.data),
     enabled: !!selectedConv,
     refetchInterval: 3000,
@@ -53,13 +53,19 @@ export default function MessagesPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    setSelectedConv(null);
+    setMessage('');
+    setRecipientId('');
+  }, [user?.id]);
+
   const sendMutation = useMutation({
     mutationFn: (content: string) =>
       api.post('/messages/send', { conversationId: selectedConv, content }),
     onSuccess: () => {
       setMessage('');
-      queryClient.invalidateQueries({ queryKey: ['messages', selectedConv] });
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['messages', user?.id, selectedConv] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', user?.id] });
     },
   });
 
@@ -281,7 +287,7 @@ export default function MessagesPage() {
           )}
         </div>
       </div>
-      {newConversationOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"><div className="flex items-center justify-between mb-4"><h2 className="text-lg font-semibold">New conversation</h2><button aria-label="Close" onClick={() => setNewConversationOpen(false)} className="p-2 text-gray-500"><X className="w-4 h-4" /></button></div><label className="label">Choose a person<select className="select mt-1" value={recipientId} onChange={e => setRecipientId(e.target.value)}><option value="">Select person…</option>{(recipients as any[]).map(person => <option key={person.id} value={person.id}>{person.name} · {person.role}</option>)}</select></label>{createConversation.isError && <p className="text-sm text-red-600 mt-2">Couldn’t open that conversation. Please try again.</p>}<div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setNewConversationOpen(false)}>Cancel</button><button className="btn-primary flex-1" disabled={!recipientId || createConversation.isPending} onClick={() => createConversation.mutate()}>{createConversation.isPending ? 'Opening…' : 'Open Conversation'}</button></div></div></div>}
+      {newConversationOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"><div className="flex items-center justify-between mb-4"><h2 className="text-lg font-semibold">New conversation</h2><button aria-label="Close" onClick={() => setNewConversationOpen(false)} className="p-2 text-gray-500"><X className="w-4 h-4" /></button></div><label className="label">Choose a person<select className="select mt-1" value={recipientId} onChange={e => setRecipientId(e.target.value)}><option value="">Select person…</option>{(recipients as any[]).map(person => <option key={person.id} value={person.id}>{person.name} · {person.role}</option>)}</select></label>{recipientsError && <p role="alert" className="text-sm text-red-600 mt-2">School contacts couldn’t be loaded. Please close this window and try again.</p>}{!recipientsError && !recipients.length && <p className="text-sm text-gray-500 mt-2">No connected school contacts are available for your account.</p>}{createConversation.isError && <p role="alert" className="text-sm text-red-600 mt-2">Couldn’t open that conversation. Please try again.</p>}<div className="flex gap-3 mt-5"><button className="btn-secondary flex-1" onClick={() => setNewConversationOpen(false)}>Cancel</button><button className="btn-primary flex-1" disabled={!recipientId || recipientsError || createConversation.isPending} onClick={() => createConversation.mutate()}>{createConversation.isPending ? 'Opening…' : 'Open Conversation'}</button></div></div></div>}
     </DashboardLayout>
   );
 }
