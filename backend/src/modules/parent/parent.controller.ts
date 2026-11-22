@@ -6,7 +6,7 @@ import { sendSuccess, sendError } from '../../utils/apiResponse';
 // Parent access is granted only by an accepted, explicit guardian invitation.
 async function getLinkedStudents(parentUserId: string) {
   return prisma.student.findMany({
-    where: { guardians: { some: { parentUserId, verifiedAt: { not: null } } } },
+    where: { guardians: { some: { parentUserId } } },
     include: {
       user: { select: { name: true, email: true, avatar: true } },
       class: { include: { teacher: { include: { user: { select: { name: true } } } } } },
@@ -16,7 +16,7 @@ async function getLinkedStudents(parentUserId: string) {
 
 async function getAccessibleChild(req: AuthRequest, studentId: string) {
   return prisma.student.findFirst({
-    where: req.user!.role === 'ADMIN' ? { id: studentId } : { id: studentId, guardians: { some: { parentUserId: req.user!.id, verifiedAt: { not: null } } } },
+    where: req.user!.role === 'ADMIN' ? { id: studentId } : { id: studentId, guardians: { some: { parentUserId: req.user!.id } } },
     include: {
       user: { select: { name: true, email: true, avatar: true } },
       class: { include: { teacher: { include: { user: { select: { name: true } } } } } },
